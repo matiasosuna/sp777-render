@@ -1,0 +1,72 @@
+name: videos
+on:
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: 'JSON list of practice ids, e.g. ["g0023","g0029"]'
+        required: true
+      forzar:
+        description: 'Replace videos already in Telegram (same message)'
+        type: boolean
+        default: false
+permissions: {}
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        id: ${{ fromJSON(inputs.ids) }}
+    env:
+      ID: ${{ matrix.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: |
+            videos
+            practicas
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/huggingface
+            ~/.cache/torch
+            ~/.npm
+          key: motor-v1
+      - name: tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji > /dev/null
+          pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -q chatterbox-tts modal
+          cd videos && npm install --no-audit --no-fund --silent && npx remotion browser ensure > /dev/null
+      - name: voice sample
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          REF_ID: ${{ secrets.REF_ID }}
+        run: python practicas/telegram.py bajar "$REF_ID" ref.wav
+      - name: video
+        run: python videos/gh_practica.py "$ID" ref.wav
+      - name: upload
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
+          FORZAR: ${{ inputs.forzar && '1' || '' }}
+        run: |
+          python practicas/telegram.py subir videos/out "$ID" > /dev/null
+          python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/telegram.json'));json.dump({i:m[i]},open('tg.json','w'))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tg-${{ matrix.id }}
+          path: tg.json
+          retention-days: 7
