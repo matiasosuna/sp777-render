@@ -81,12 +81,16 @@ jobs:
         run: |
           D=videos/out/voz/reel-$ID; mkdir -p "$D"
           if [ -n "$FID" ]; then
-            python practicas/telegram.py bajar "$FID" voz.tgz && tar xzf voz.tgz -C "$D"
+            python practicas/telegram.py bajar "$FID" voz.tgz
+            tar xzf voz.tgz -C "$D"
+            # la voz va en FLAC (el bot de Telegram baja hasta 20 MB); las viejas venían en wav
+            if [ -f "$D/voz.flac" ]; then ffmpeg -v error -y -i "$D/voz.flac" "$D/voz.wav"; fi
             echo '{}' > voz.json
           else
             python practicas/telegram.py bajar "$REF_ID" ref.wav
             python videos/gh_practica.py voz "$ID" ref.wav
-            tar czf voz.tgz -C "$D" voz.wav timeline.json
+            ffmpeg -v error -y -i "$D/voz.wav" -c:a flac -sample_fmt s16 "$D/voz.flac"
+            tar czf voz.tgz -C "$D" voz.flac timeline.json
             python practicas/telegram.py subir-voz voz.tgz "$ID" > /dev/null
             python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/voces.json'));json.dump({i:m[i]},open('voz.json','w'))"
           fi
