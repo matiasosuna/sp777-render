@@ -5,8 +5,17 @@ on:
       ids:
         description: 'JSON list of practice ids, e.g. ["g0023","g0029"]'
         required: true
+      modo:
+        description: 'video = voice (reused if saved) + render + upload; voz = only the voice'
+        type: choice
+        options: [video, voz]
+        default: video
       forzar:
         description: 'Replace videos already in Telegram (same message)'
+        type: boolean
+        default: false
+      voz_nueva:
+        description: 'Make the voice again even if it is saved'
         type: boolean
         default: false
 permissions: {}
@@ -21,6 +30,8 @@ jobs:
         id: ${{ fromJSON(inputs.ids) }}
     env:
       ID: ${{ matrix.id }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +47,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: saved voice?
+        id: v
+        env:
+          NUEVA: ${{ inputs.voz_nueva && '1' || '' }}
+        run: |
+          FID=$(python -c "import json,os;print(json.load(open('practicas/voces.json')).get(os.environ['ID'],{}).get('file_id',''))" 2>/dev/null || true)
+          [ -n "$NUEVA" ] && FID=""
+          echo "fid=$FID" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: |
@@ -47,26 +66,42 @@ jobs:
       - name: tools
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji > /dev/null
-          pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
-          pip install -q chatterbox-tts modal
-          cd videos && npm install --no-audit --no-fund --silent && npx remotion browser ensure > /dev/null
-      - name: voice sample
+          pip install -q modal
+          if [ -z "${{ steps.v.outputs.fid }}" ]; then
+            pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+            pip install -q chatterbox-tts
+          fi
+          if [ "${{ inputs.modo }}" = "video" ]; then
+            cd videos && npm install --no-audit --no-fund --silent && npx remotion browser ensure > /dev/null
+          fi
+      - name: voice
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           REF_ID: ${{ secrets.REF_ID }}
-        run: python practicas/telegram.py bajar "$REF_ID" ref.wav
+          FID: ${{ steps.v.outputs.fid }}
+        run: |
+          D=videos/out/voz/reel-$ID; mkdir -p "$D"
+          if [ -n "$FID" ]; then
+            python practicas/telegram.py bajar "$FID" voz.tgz && tar xzf voz.tgz -C "$D"
+            echo '{}' > voz.json
+          else
+            python practicas/telegram.py bajar "$REF_ID" ref.wav
+            python videos/gh_practica.py voz "$ID" ref.wav
+            tar czf voz.tgz -C "$D" voz.wav timeline.json
+            python practicas/telegram.py subir-voz voz.tgz "$ID" > /dev/null
+            python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/voces.json'));json.dump({i:m[i]},open('voz.json','w'))"
+          fi
       - name: video
-        run: python videos/gh_practica.py "$ID" ref.wav
-      - name: upload
+        if: inputs.modo == 'video'
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
           FORZAR: ${{ inputs.forzar && '1' || '' }}
         run: |
+          python videos/gh_practica.py render "$ID"
           python practicas/telegram.py subir videos/out "$ID" > /dev/null
           python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/telegram.json'));json.dump({i:m[i]},open('tg.json','w'))"
+      - name: result
+        run: python -c "import json,os;l=lambda f:json.load(open(f)) if os.path.exists(f) else {};json.dump({'video':l('tg.json'),'voz':l('voz.json')},open('res.json','w'))"
       - uses: actions/upload-artifact@v4
         with:
           name: tg-${{ matrix.id }}
-          path: tg.json
+          path: res.json
           retention-days: 7
