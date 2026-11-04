@@ -111,7 +111,11 @@ jobs:
         run: |
           V=videos/out/$ID.mp4; mkdir -p fotos
           DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V")
-          for k in 1 2 3 4 5 6; do ffmpeg -v error -y -ss $(python -c "print($DUR*$k/7)") -i "$V" -frames:v 1 -vf scale=360:-1 "fotos/$ID-$k.jpg"; done
+          # 6 cuadros en la historia (primer 16 %) y 6 en el resto
+          for k in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            T=$(python -c "k=$k;d=$DUR;print(d*0.16*k/7 if k<=6 else d*(0.16+0.84*(k-6)/7))")
+            ffmpeg -v error -y -ss "$T" -i "$V" -frames:v 1 -vf scale=360:-1 "fotos/$ID-$(printf %02d $k).jpg"
+          done
       - name: result
         run: python -c "import json,os;l=lambda f:json.load(open(f)) if os.path.exists(f) else {};json.dump({'video':l('tg.json'),'voz':l('voz.json')},open('res.json','w'))"
       - uses: actions/upload-artifact@v4
