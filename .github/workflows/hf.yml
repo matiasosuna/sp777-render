@@ -1,0 +1,108 @@
+name: hf
+# Prueba HyperFrames (4/11/2026): arma la composición HTML de una técnica sobre su voz guardada, la renderiza
+# y la manda al canal como mensaje NUEVO (no toca telegram.json). Los registros no muestran el guion.
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: 'practice id, e.g. g0022'
+        required: true
+      calidad:
+        type: choice
+        options: [looks, draft, delivery]
+        default: looks
+permissions: {}
+jobs:
+  hf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ID: ${{ inputs.id }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
+      DO_NOT_TRACK: '1'
+      HYPERFRAMES_TELEMETRY: '0'
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: |
+            videos
+            practicas
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/hyperframes
+            ~/.cache/puppeteer
+          key: hf-v1
+      - name: tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji > /dev/null
+          npx -y hyperframes@0.9.12 browser ensure > hf.log 2>&1 || (tail -5 hf.log; exit 1)
+      - name: voice
+        run: |
+          FID=$(python -c "import json,os;print(json.load(open('practicas/voces.json'))[os.environ['ID']]['file_id'])")
+          mkdir -p voz && python practicas/telegram.py bajar "$FID" voz.tgz && tar xzf voz.tgz -C voz
+          if [ -f voz/voz.flac ]; then ffmpeg -v error -y -i voz/voz.flac voz/voz.wav; fi
+      - name: build
+        run: |
+          npx -y hyperframes@0.9.12 init hf0 --skip-skills >> hf.log 2>&1 || true
+          python videos/hf/armar.py "$ID" voz build
+          # lo que el proyecto en blanco trae y la plantilla no (configuración), sin pisar index.html
+          if [ -d hf0 ]; then cp -rn hf0/. build/ 2>/dev/null || true; rm -f build/compositions/*.html.example; fi
+          ls build
+      - name: check
+        working-directory: build
+        run: |
+          npx -y hyperframes@0.9.12 lint > ../lint.txt 2>&1 || true
+          npx -y hyperframes@0.9.12 check --json > ../check.json 2>../check.err || true
+          python -c "import json;d=json.load(open('../check.json'));print('check ok' if d.get('ok') else 'check: hay avisos (ver artefacto)')" || echo "check: sin json"
+      - name: render
+        working-directory: build
+        run: |
+          npx -y hyperframes@0.9.12 render --quality ${{ inputs.calidad }} -o ../out.mp4 > ../render.log 2>&1 || { tail -c 1500 ../render.log | grep -v -i -E 'said|text' ; exit 1; }
+          tail -3 ../render.log
+          ffprobe -v error -show_entries format=duration -of csv=p=0 ../out.mp4
+      - name: frames
+        run: |
+          mkdir -p fotos; DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
+          for k in $(seq 1 16); do
+            T=$(python -c "print($DUR*($k-0.5)/16)")
+            ffmpeg -v error -y -ss "$T" -i out.mp4 -frames:v 1 -vf scale=360:-1 "fotos/$ID-$(printf %02d $k).jpg"
+          done
+      - name: telegram
+        run: |
+          python - <<'EOF'
+          import os, sys, json, tempfile
+          from pathlib import Path
+          sys.path.insert(0, "practicas"); import telegram as T
+          i = os.environ["ID"]
+          with tempfile.TemporaryDirectory() as t:
+              mp4 = T.liviano(Path("out.mp4"), Path(t)); medidas, mini = T.datos(mp4, Path(t))
+              m = T.bot("sendVideo", {"chat_id": os.environ["TELEGRAM_CANAL_REPERTORIO"], "caption": f"PRUEBA HyperFrames · {i}",
+                                      "supports_streaming": "true", "thumbnail": "attach://thumbnail", **medidas}, mp4, mini)
+          json.dump({"msg": m["message_id"]}, open("res.json", "w")); print("en Telegram, mensaje", m["message_id"])
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hf-${{ inputs.id }}
+          path: |
+            res.json
+            fotos/
+            lint.txt
+            check.json
+            check.err
+            render.log
+            hf.log
+          retention-days: 7
