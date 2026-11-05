@@ -1,23 +1,43 @@
 name: hf
-# Prueba HyperFrames (4/11/2026): arma la composición HTML de una técnica sobre su voz guardada, la renderiza
-# y la manda al canal como mensaje NUEVO (no toca telegram.json). Los registros no muestran el guion.
+# HyperFrames (4/11/2026): arma la composición HTML de cada técnica sobre su voz guardada (plantilla a medida o el
+# motor general), la renderiza entera y la manda al canal como mensaje NUEVO (no toca telegram.json).
+# Los registros no muestran el guion.
 on:
   workflow_dispatch:
     inputs:
-      id:
-        description: 'practice id, e.g. g0022'
+      ids:
+        description: 'practice ids, space separated (e.g. box 478)'
         required: true
       calidad:
         type: choice
         options: [looks, draft, delivery]
         default: looks
+      motor:
+        description: 'usar el motor general aunque haya plantilla a medida'
+        type: boolean
+        default: false
 permissions: {}
 jobs:
+  lista:
+    runs-on: ubuntu-latest
+    outputs:
+      ids: ${{ steps.l.outputs.ids }}
+    steps:
+      - id: l
+        env:
+          IDS: ${{ inputs.ids }}
+        run: python3 -c "import json,os;print('ids='+json.dumps(os.environ['IDS'].split()))" >> "$GITHUB_OUTPUT"
   hf:
+    needs: lista
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        id: ${{ fromJSON(needs.lista.outputs.ids) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
-      ID: ${{ inputs.id }}
+      ID: ${{ matrix.id }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
       DO_NOT_TRACK: '1'
@@ -57,7 +77,7 @@ jobs:
       - name: build
         run: |
           npx -y hyperframes@0.9.12 init hf0 --skip-skills >> hf.log 2>&1 || true
-          python videos/hf/armar.py "$ID" voz build
+          python videos/hf/armar.py "$ID" voz build --entero ${{ inputs.motor && '--motor' || '' }}
           # lo que el proyecto en blanco trae y la plantilla no (configuración), sin pisar index.html
           if [ -d hf0 ]; then cp -rn hf0/. build/ 2>/dev/null || true; rm -f build/compositions/*.html.example; fi
           ls build
@@ -86,17 +106,20 @@ jobs:
           import os, sys, json, tempfile
           from pathlib import Path
           sys.path.insert(0, "practicas"); import telegram as T
+          import re
           i = os.environ["ID"]
+          m0 = re.search(r"^titulo:\s*(.+)$", open(f"practicas/{i}.md").read(), re.M)
+          tit = m0.group(1).strip() if m0 else i
           with tempfile.TemporaryDirectory() as t:
               mp4 = T.liviano(Path("out.mp4"), Path(t)); medidas, mini = T.datos(mp4, Path(t))
-              m = T.bot("sendVideo", {"chat_id": os.environ["TELEGRAM_CANAL_REPERTORIO"], "caption": f"PRUEBA HyperFrames · {i}",
+              m = T.bot("sendVideo", {"chat_id": os.environ["TELEGRAM_CANAL_REPERTORIO"], "caption": f"{tit} · HyperFrames",
                                       "supports_streaming": "true", "thumbnail": "attach://thumbnail", **medidas}, mp4, mini)
           json.dump({"msg": m["message_id"]}, open("res.json", "w")); print("en Telegram, mensaje", m["message_id"])
           EOF
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: hf-${{ inputs.id }}
+          name: hf-${{ matrix.id }}
           path: |
             res.json
             fotos/
