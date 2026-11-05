@@ -22,16 +22,34 @@ on:
         description: 'Also save 6 frames of each video (to check the drawing)'
         type: boolean
         default: false
+      tanda:
+        description: 'How many ids this run takes; the rest go to a new run when it ends (chained, so the account never queues for hours)'
+        default: '15'
 permissions: {}
+# La cuenta gratis corre 20 trabajos a la vez entre TODOS los repos. Si se lanzan cientos juntos quedan horas en cola
+# (pasó el 3/11). Por eso cada corrida toma una tanda (15, deja 5 lugares a los otros proyectos) y al terminar lanza la siguiente.
 jobs:
+  tanda:
+    runs-on: ubuntu-latest
+    outputs:
+      estos: ${{ steps.t.outputs.estos }}
+      resto: ${{ steps.t.outputs.resto }}
+    steps:
+      - id: t
+        env:
+          IDS: ${{ inputs.ids }}
+          N: ${{ inputs.tanda }}
+        run: |
+          python3 -c "import json,os;l=json.loads(os.environ['IDS']);n=int(os.environ['N'] or 15);o=open(os.environ['GITHUB_OUTPUT'],'a');o.write('estos='+json.dumps(l[:n])+'\n');o.write('resto='+json.dumps(l[n:])+'\n');print(len(l[:n]),'ahora,',len(l[n:]),'después')"
   video:
+    needs: tanda
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 15
       matrix:
-        id: ${{ fromJSON(inputs.ids) }}
+        id: ${{ fromJSON(needs.tanda.outputs.estos) }}
     env:
       ID: ${{ matrix.id }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -125,3 +143,16 @@ jobs:
             res.json
             fotos/
           retention-days: 7
+  siguiente:
+    needs: [tanda, video]
+    if: always() && needs.tanda.outputs.resto != '[]' && needs.tanda.outputs.resto != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RESTO: ${{ needs.tanda.outputs.resto }}
+        run: |
+          gh workflow run videos.yml -R "$GITHUB_REPOSITORY" -f ids="$RESTO" -f modo=${{ inputs.modo }} -f forzar=${{ inputs.forzar }} \
+            -f voz_nueva=${{ inputs.voz_nueva }} -f fotos=${{ inputs.fotos }} -f tanda=${{ inputs.tanda }}
