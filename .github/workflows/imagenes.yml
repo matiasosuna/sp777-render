@@ -1,0 +1,94 @@
+name: imagenes
+# Ilustraciones con FLUX.2 [klein] 4B (Apache 2.0, el mismo modelo abierto que usa Workers AI) en CPU, con
+# stable-diffusion.cpp y pesos GGUF Q4_K_M. Sin GPU ni cuentas: los pesos bajan de Hugging Face sin token y
+# quedan en caché (~5,4 GB). La imagen (y el registro con los tiempos) quedan como artefacto.
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'descripción de la imagen'
+        required: true
+      width:
+        default: '768'
+      height:
+        default: '1344'
+      steps:
+        default: '4'
+      cantidad:
+        description: 'imágenes con el modelo cargado una sola vez'
+        default: '1'
+      seed:
+        default: '42'
+permissions: {}
+env:
+  SD_TAG: master-1053-5a1ba5d
+  MODELOS: v1-q4km
+jobs:
+  imagen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - id: cpu
+        run: echo "h=$(grep -m1 -E '^flags' /proc/cpuinfo | sha1sum | cut -c1-10)" >> "$GITHUB_OUTPUT"; nproc; free -g; df -h / | tail -1; grep -m1 'model name' /proc/cpuinfo
+      # binario compilado para esta CPU (la clave cambia si el runner tiene otras instrucciones)
+      - uses: actions/cache/restore@v4
+        id: sdc
+        with:
+          path: ~/sd
+          key: sdcpp-${{ env.SD_TAG }}-${{ steps.cpu.outputs.h }}
+      - if: steps.sdc.outputs.cache-hit != 'true'
+        run: |
+          t=$(date +%s)
+          git clone -q --depth 1 --branch "$SD_TAG" --recursive --shallow-submodules https://github.com/leejet/stable-diffusion.cpp /tmp/sdcpp
+          cmake -S /tmp/sdcpp -B /tmp/sdcpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DSD_BUILD_SHARED_LIBS=OFF >/dev/null
+          cmake --build /tmp/sdcpp/build --config Release -j"$(nproc)" --target sd-cli >/dev/null
+          mkdir -p ~/sd && cp "$(find /tmp/sdcpp/build -type f -name sd-cli | head -1)" ~/sd/
+          echo "compilado en $(( $(date +%s) - t )) s"
+      - if: steps.sdc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/sd
+          key: ${{ steps.sdc.outputs.cache-primary-key }}
+      - uses: actions/cache/restore@v4
+        id: mc
+        with:
+          path: ~/modelos
+          key: flux2-klein-4b-${{ env.MODELOS }}
+      - if: steps.mc.outputs.cache-hit != 'true'
+        run: |
+          t=$(date +%s); mkdir -p ~/modelos; cd ~/modelos
+          b(){ curl -fL --retry 5 --retry-all-errors -sS -o "$1" "https://huggingface.co/$2"; }
+          b difusion.gguf unsloth/FLUX.2-klein-4B-GGUF/resolve/main/flux-2-klein-4b-Q4_K_M.gguf & p1=$!
+          b llm.gguf unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf & p2=$!
+          b vae.safetensors Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/main/split_files/vae/flux2-vae.safetensors & p3=$!
+          wait $p1 && wait $p2 && wait $p3; ls -la; du -sh .
+          echo "bajado en $(( $(date +%s) - t )) s"
+      - if: steps.mc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/modelos
+          key: ${{ steps.mc.outputs.cache-primary-key }}
+      - name: generar
+        env:
+          PROMPT: ${{ inputs.prompt }}
+          W: ${{ inputs.width }}
+          H: ${{ inputs.height }}
+          STEPS: ${{ inputs.steps }}
+          N: ${{ inputs.cantidad }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          set -o pipefail; mkdir -p out; t=$(date +%s)
+          [ -x /usr/bin/time ] || sudo apt-get install -y -qq time >/dev/null
+          /usr/bin/time -v ~/sd/sd-cli -t "$(nproc)" \
+            --diffusion-model ~/modelos/difusion.gguf --llm ~/modelos/llm.gguf --vae ~/modelos/vae.safetensors \
+            -p "$PROMPT" -W "$W" -H "$H" --steps "$STEPS" --cfg-scale 1.0 -s "$SEED" -b "$N" \
+            --vae-tiling -o out/imagen_%d.png 2>&1 | tee out/registro.txt
+          echo "total sd-cli: $(( $(date +%s) - t )) s" | tee -a out/registro.txt
+          grep -iE 'loading|completed|taking|Maximum resident|Elapsed' out/registro.txt | tail -30
+          ls -la out
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imagenes
+          path: out/
+          retention-days: 7
