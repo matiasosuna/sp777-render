@@ -19,6 +19,10 @@ on:
         default: '1'
       seed:
         default: '42'
+      vae_tiling:
+        description: 'decodificar en mosaicos (menos RAM, mucho más lento en CPU)'
+        type: boolean
+        default: false
 permissions: {}
 env:
   SD_TAG: master-1053-5a1ba5d
@@ -76,13 +80,15 @@ jobs:
           STEPS: ${{ inputs.steps }}
           N: ${{ inputs.cantidad }}
           SEED: ${{ inputs.seed }}
+          TILING: ${{ inputs.vae_tiling }}
         run: |
           set -o pipefail; mkdir -p out; t=$(date +%s)
+          T=""; [ "$TILING" = true ] && T=--vae-tiling
           [ -x /usr/bin/time ] || sudo apt-get install -y -qq time >/dev/null
           /usr/bin/time -v ~/sd/sd-cli -t "$(nproc)" \
             --diffusion-model ~/modelos/difusion.gguf --llm ~/modelos/llm.gguf --vae ~/modelos/vae.safetensors \
             -p "$PROMPT" -W "$W" -H "$H" --steps "$STEPS" --cfg-scale 1.0 -s "$SEED" -b "$N" \
-            --vae-tiling -o out/imagen_%d.png 2>&1 | tee out/registro.txt
+            $T -o out/imagen_%d.png 2>&1 | tee out/registro.txt
           echo "total sd-cli: $(( $(date +%s) - t )) s" | tee -a out/registro.txt
           grep -iE 'loading|completed|taking|Maximum resident|Elapsed' out/registro.txt | tail -30
           ls -la out
