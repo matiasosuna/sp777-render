@@ -57,7 +57,7 @@ jobs:
           case "$CARPETA" in *..*|/*) echo "carpeta inválida"; exit 1;; esac
           test -f "videos/hf/$CARPETA/index.html"
           npx -y hyperframes@0.9.12 init hf0 --skip-skills >> hf.log 2>&1 || true
-          rm -rf build && cp -r "videos/hf/$CARPETA" build
+          rm -rf build && cp -rL "videos/hf/$CARPETA" build
           if [ -d hf0 ]; then cp -rn hf0/. build/ 2>/dev/null || true; rm -f build/compositions/*.html.example; fi
           ls build
       - name: check
