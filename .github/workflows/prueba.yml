@@ -1,0 +1,99 @@
+name: prueba
+# Render de prueba (6/11/2026): renderiza una carpeta de videos/hf tal cual (sin voz ni guion, no pasa por armar.py)
+# y sube el mp4 y cuadros sueltos como artefacto. No manda nada a Telegram. Pensado para prototipos (p. ej. prueba-3d,
+# el encapuchado en three.js): WebGL corre en Chrome por software (SwiftShader), por eso --no-browser-gpu.
+on:
+  workflow_dispatch:
+    inputs:
+      carpeta:
+        description: 'carpeta de videos/hf'
+        default: 'prueba-3d'
+      ref:
+        description: 'rama o commit de spiritual-practices'
+        default: 'main'
+      calidad:
+        type: choice
+        options: [looks, draft, delivery]
+        default: looks
+      cuadros:
+        description: 'cuadros sueltos a extraer'
+        default: '24'
+permissions: {}
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARPETA: ${{ inputs.carpeta }}
+      CUADROS: ${{ inputs.cuadros }}
+      DO_NOT_TRACK: '1'
+      HYPERFRAMES_TELEMETRY: '0'
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: |
+            videos/hf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/hyperframes
+            ~/.cache/puppeteer
+          key: hf-v1
+      - name: tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          npx -y hyperframes@0.9.12 browser ensure > hf.log 2>&1 || (tail -5 hf.log; exit 1)
+      - name: build
+        run: |
+          case "$CARPETA" in *..*|/*) echo "carpeta inválida"; exit 1;; esac
+          test -f "videos/hf/$CARPETA/index.html"
+          npx -y hyperframes@0.9.12 init hf0 --skip-skills >> hf.log 2>&1 || true
+          rm -rf build && cp -r "videos/hf/$CARPETA" build
+          if [ -d hf0 ]; then cp -rn hf0/. build/ 2>/dev/null || true; rm -f build/compositions/*.html.example; fi
+          ls build
+      - name: check
+        working-directory: build
+        run: |
+          npx -y hyperframes@0.9.12 lint > ../lint.txt 2>&1 || true
+          npx -y hyperframes@0.9.12 check --json > ../check.json 2>../check.err || true
+          tail -30 ../lint.txt
+      - name: render
+        working-directory: build
+        run: |
+          S=$(date +%s)
+          npx -y hyperframes@0.9.12 render --quality ${{ inputs.calidad }} --no-browser-gpu -o ../out.mp4 > ../render.log 2>&1 || { tail -c 4000 ../render.log; exit 1; }
+          echo "render: $(( $(date +%s) - S )) s" | tee ../tiempo.txt
+          tail -25 ../render.log
+          ffprobe -v error -show_entries format=duration -of csv=p=0 ../out.mp4
+      - name: frames
+        run: |
+          mkdir -p fotos; DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
+          for k in $(seq 1 "$CUADROS"); do
+            T=$(python3 -c "print($DUR*($k-0.5)/$CUADROS)")
+            ffmpeg -v error -y -ss "$T" -i out.mp4 -frames:v 1 -vf scale=540:-1 -q:v 3 "fotos/$CARPETA-$(printf %02d $k).jpg"
+          done
+          ffmpeg -v error -y -ss 0.5 -i out.mp4 -frames:v 1 "fotos/$CARPETA-full-a.png"
+          ffmpeg -v error -y -ss 5.8 -i out.mp4 -frames:v 1 "fotos/$CARPETA-full-b.png" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prueba-${{ inputs.carpeta }}
+          path: |
+            out.mp4
+            fotos/
+            lint.txt
+            check.json
+            check.err
+            render.log
+            tiempo.txt
+            hf.log
+          retention-days: 7
