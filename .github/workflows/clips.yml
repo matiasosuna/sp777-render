@@ -1,9 +1,11 @@
 name: clips
-run-name: clips ${{ inputs.modelo }} ${{ inputs.tamano }} ${{ inputs.frames }}f ${{ inputs.steps }}p
+run-name: clips ${{ inputs.modelo }} ${{ inputs.deco }} ${{ inputs.tamano }} ${{ inputs.frames }}f ${{ inputs.steps }}p
 # Anima una ilustración (imagen → video) en CPU con Wan2.2 TI2V 5B (Apache 2.0) y stable-diffusion.cpp, pesos GGUF.
 # Las versiones Turbo/FastWan son destiladas: 3-4 pasos con cfg 1. Los pesos (~9 GB) bajan de Hugging Face sin
 # token en cada corrida (no se guardan en caché: el límite de 10 GB del repo ya lo usan imagenes y motor).
 # El binario de sd.cpp es el mismo que compila imagenes.yml (misma clave de caché).
+# El VAE completo de Wan2.2 pide ~21 GB para decodificar 480x832 y con mosaicos tarda ~2 h en 4 vCPU; por eso el
+# decodificador por defecto es TAEHV (taew2_2), que tarda segundos.
 # Sale como artefacto: clip.mp4, hoja.png (8 cuadros), registro.txt (tiempos) y memoria.txt (RAM cada 5 s).
 on:
   workflow_dispatch:
@@ -32,6 +34,11 @@ on:
         default: '4'
       seed:
         default: '42'
+      deco:
+        description: 'decodificador: tae (TAEHV, segundos) o vae (el completo: en CPU no entra en 16 GB y con mosaicos tarda ~2 h)'
+        type: choice
+        options: [tae, vae]
+        default: tae
       extra:
         description: 'más opciones de sd-cli (ej. --flow-shift 8 --vae-tiling --cfg-scale 5)'
         default: ''
@@ -66,6 +73,7 @@ jobs:
       - name: pesos
         env:
           MODELO: ${{ inputs.modelo }}
+          DECO: ${{ inputs.deco }}
         run: |
           t=$(date +%s); mkdir -p ~/m; cd ~/m
           case "$MODELO" in
@@ -77,7 +85,8 @@ jobs:
           b(){ curl -fL --retry 5 --retry-all-errors -sS -o "$1" "https://huggingface.co/$2"; }
           b dif.gguf "$D" & p1=$!
           b umt5.gguf city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q5_K_M.gguf & p2=$!
-          b vae.safetensors QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/VAE/Wan2.2_VAE.safetensors & p3=$!
+          if [ "$DECO" = vae ]; then b vae.safetensors QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/VAE/Wan2.2_VAE.safetensors & p3=$!
+          else curl -fL --retry 5 --retry-all-errors -sS -o tae.safetensors https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_2.safetensors & p3=$!; fi
           wait $p1 && wait $p2 && wait $p3; ls -la; du -sh .; df -h / | tail -1
           echo "bajado en $(( $(date +%s) - t )) s"
       - name: generar
@@ -92,6 +101,7 @@ jobs:
           STEPS: ${{ inputs.steps }}
           SEED: ${{ inputs.seed }}
           EXTRA: ${{ inputs.extra }}
+          DECO: ${{ inputs.deco }}
         run: |
           set -o pipefail; mkdir -p out/frames; t0=$(date +%s)
           W=${TAM%x*}; H=${TAM#*x}
@@ -100,20 +110,18 @@ jobs:
           case "$IMG" in http*) U="$IMG" ;; *) U="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/$IMG" ;; esac
           curl -fL --retry 5 -sS -o in.img "$U"
           ffmpeg -loglevel error -y -i in.img -vf "scale=$W:$H:force_original_aspect_ratio=increase,crop=$W:$H" out/entrada.png
+          DEC="--tae $HOME/m/tae.safetensors"; [ "$DECO" = vae ] && DEC="--vae $HOME/m/vae.safetensors"
           CFG=1.0; [ "$MODELO" = base-q4km ] && CFG=5.0
           ( while sleep 5; do echo "$(date +%T) $(free -m | awk 'NR==2{print $3}') MB"; done ) > out/memoria.txt & MEM=$!
           corre(){
             /usr/bin/time -v ~/sd/sd-cli -M vid_gen -t "$(nproc)" --mmap \
-              --diffusion-model ~/m/dif.gguf --t5xxl ~/m/umt5.gguf --vae ~/m/vae.safetensors \
+              --diffusion-model ~/m/dif.gguf --t5xxl ~/m/umt5.gguf $DEC \
               -i out/entrada.png -p "$PROMPT" -n "$NEG" -W "$W" -H "$H" \
               --video-frames "$FR" --fps "$FPS" --steps "$STEPS" --cfg-scale "$CFG" \
               --sampling-method euler --flow-shift 5 -s "$SEED" $EXTRA "$@" \
               -o out/frames/f_%03d.png 2>&1 | grep -v '|.*s/it' | tee -a out/registro.txt
           }
-          if ! corre; then
-            echo "=== falló (¿memoria en el VAE?): reintento con --vae-tiling" | tee -a out/registro.txt
-            rm -f out/frames/*; corre --vae-tiling
-          fi
+          corre
           kill $MEM || true
           echo "total sd-cli: $(( $(date +%s) - t0 )) s" | tee -a out/registro.txt
           echo "pico RAM usada (free): $(sort -k2 -n out/memoria.txt | tail -1)" | tee -a out/registro.txt
