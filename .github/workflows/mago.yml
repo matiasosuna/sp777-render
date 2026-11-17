@@ -1,0 +1,129 @@
+name: mago
+# Mago encapuchado riggeado con mocap (tai chi CMU): simula la tela una vez, renderiza el video en tramos
+# paralelos, saca 4 fotos y arma el MP4 con ffmpeg. Todo en GitHub Actions (nada en la Mac).
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: 'renderizar el video completo (false = solo simulación + fotos)'
+        default: 'true'
+      samples:
+        description: 'muestras por cuadro del video'
+        default: '20'
+permissions:
+  contents: read
+env:
+  BLENDER_VERSION: '4.2.23'
+  BLENDER_SERIES: '4.2'
+  RUN_BLENDER: ~/blender/blender -b --factory-startup --python-exit-code 1 --python blender/mago.py --
+jobs:
+  sim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - &cache
+        name: Cache Blender
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+      - &download
+        name: Download Blender
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender
+          curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            | tar -xJ --strip-components=1 -C ~/blender
+      - &libs
+        name: System libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libegl1 libxkbcommon0 libsm6 libice6 >/dev/null
+      - name: Simulate cloth
+        run: |
+          set -o pipefail
+          mkdir -p out
+          time eval $RUN_BLENDER --stage sim --out out 2>&1 | tee out/log_sim.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim
+          path: out/
+          retention-days: 14
+  stills:
+    needs: sim
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - *cache
+      - *download
+      - *libs
+      - uses: actions/download-artifact@v4
+        with:
+          name: sim
+          path: sim
+      - name: Render stills
+        run: |
+          set -o pipefail
+          mkdir -p out
+          time eval $RUN_BLENDER --stage stills --cache sim/sim.npz --out out 2>&1 | tee out/log_stills.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stills
+          path: out/
+          retention-days: 14
+  render:
+    needs: sim
+    if: inputs.video == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v4
+      - *cache
+      - *download
+      - *libs
+      - uses: actions/download-artifact@v4
+        with:
+          name: sim
+          path: sim
+      - name: Render frames
+        run: |
+          set -o pipefail
+          mkdir -p out
+          time eval $RUN_BLENDER --stage render --cache sim/sim.npz --chunk ${{ matrix.chunk }} --nchunks 12 \
+            --samples ${{ inputs.samples }} --out out 2>&1 | tee out/log_render.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ matrix.chunk }}
+          path: out/frames/
+          retention-days: 7
+  video:
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: frames-*
+          path: frames
+          merge-multiple: true
+      - name: Encode MP4
+        run: |
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null)
+          ls frames | head; ls frames | wc -l
+          mkdir -p out
+          ffmpeg -y -framerate 30 -start_number 0 -i frames/f_%04d.png -c:v libx264 -preset slow -crf 18 \
+            -pix_fmt yuv420p -movflags +faststart out/out.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video
+          path: out/
+          retention-days: 14
