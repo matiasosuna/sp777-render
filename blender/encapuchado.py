@@ -392,7 +392,7 @@ M['robe_in'] = toon_mat('tunica_dentro', (0.006, 0.005, 0.014), rim_k=0.0)
 M['sleeve'] = toon_mat('manga', (0.016, 0.016, 0.050), rim=(0.3, 0.6, 1.0), rim_k=0.3, trim=True)
 M['sleeve_in'] = toon_mat('manga_forro', (0.12, 0.03, 0.21), rim_k=0.15, amb=0.3, trim=True, line_only=True)
 M['sash'] = toon_mat('fajin', (0.10, 0.022, 0.17), rim=(0.7, 0.4, 1.0), rim_k=0.15)
-M['glove'] = toon_mat('guante', (0.055, 0.042, 0.050), rim=(0.3, 0.7, 1.0), rim_k=0.3, amb=0.3)
+M['glove'] = toon_mat('guante', (0.11, 0.085, 0.10), rim=(0.3, 0.7, 1.0), rim_k=0.25, amb=0.3)
 M['face'] = toon_mat('cara', (0.004, 0.004, 0.008), rim_k=0.0, amb=0.0)
 def floor_mat():
     mat = bpy.data.materials.new('piso')
@@ -417,13 +417,20 @@ def floor_mat():
     nt.links.new(mix.outputs[0], em.inputs['Color'])
     add = N(nt, 'ShaderNodeAddShader')
     nt.links.new(toon.outputs[0], add.inputs[0]); nt.links.new(em.outputs[0], add.inputs[1])
-    nt.links.new(add.outputs[0], out.inputs['Surface'])
+    fade = N(nt, 'ShaderNodeMapRange'); fade.inputs['From Min'].default_value = 1.8; fade.inputs['From Max'].default_value = 4.5
+    fade.interpolation_type = 'SMOOTHSTEP'
+    nt.links.new(ln.outputs['Value'], fade.inputs['Value'])
+    tr = N(nt, 'ShaderNodeBsdfTransparent')
+    mx = N(nt, 'ShaderNodeMixShader')
+    nt.links.new(fade.outputs[0], mx.inputs['Fac'])
+    nt.links.new(add.outputs[0], mx.inputs[1]); nt.links.new(tr.outputs[0], mx.inputs[2])
+    nt.links.new(mx.outputs[0], out.inputs['Surface'])
     return mat
 
 M['floor'] = floor_mat()
 M['gold'] = gold_mat()
 M['eye'] = emit_mat('ojos', (0.55, 0.95, 1.0), 28.0)
-M['gem'] = emit_mat('gema', (0.08, 0.45, 1.0), 2.2)
+M['gem'] = emit_mat('gema', (0.05, 0.35, 1.0), 1.6)
 M['gem_core'] = emit_mat('gema_brillo', (0.6, 0.9, 1.0), 4.0)
 M['rune'] = emit_mat('runas', (0.25, 0.8, 1.0), 2.6)
 M['rune_floor'] = emit_mat('runas_piso', (0.25, 0.75, 1.0), 1.8)
@@ -470,8 +477,9 @@ HEAD_C = Vector((0, 0.0, 1.66))
 body = {}
 body['head'] = ellipsoid('c_cabeza', HEAD_C, (0.085, 0.10, 0.115))
 body['neck'] = cone_between('c_cuello', (0, 0.01, 1.44), (0, 0.0, 1.60), 0.058, 0.052)
-body['shoulders'] = ellipsoid('c_hombros', (0, 0.015, 1.43), (0.24, 0.085, 0.06))
-body['chest'] = ellipsoid('c_pecho', (0, 0.01, 1.30), (0.17, 0.12, 0.20))
+body['shoulders'] = cone_between('c_trapecio_d', (0.03, 0.015, 1.485), (0.20, 0.02, 1.425), 0.05, 0.05)
+body['shoulders2'] = cone_between('c_trapecio_i', (-0.03, 0.015, 1.485), (-0.20, 0.02, 1.425), 0.05, 0.05)
+body['chest'] = ellipsoid('c_pecho', (0, 0.01, 1.29), (0.165, 0.115, 0.19))
 body['belly'] = ellipsoid('c_panza', (0, 0.01, 1.05), (0.15, 0.11, 0.18))
 body['hips'] = ellipsoid('c_cadera', (0, 0.015, 0.90), (0.18, 0.13, 0.13))
 for s, nm in ((1, 'd'), (-1, 'i')):
@@ -515,12 +523,12 @@ def add_to(cc_names, obs):
             if ob.name not in CC[k].objects:
                 CC[k].objects.link(ob)
 
-torso_names = ['neck', 'shoulders', 'chest', 'belly', 'hips']
+torso_names = ['neck', 'shoulders', 'shoulders2', 'chest', 'belly', 'hips']
 legs = [body[k] for k in body if k[:-1] in ('thigh', 'shin', 'knee', 'foot')]
 add_to(['robe'], [body[k] for k in torso_names] + legs + [floor])
 add_to(['sleeve'], arms)
 add_to(['cloak'], list(body.values()) + arms + [floor])
-add_to(['cowl'], [body[k] for k in ('head', 'neck', 'shoulders', 'chest')])
+add_to(['cowl'], [body[k] for k in ('head', 'neck', 'shoulders', 'shoulders2', 'chest')])
 add_to(['sash'], legs + [floor])
 
 # ---------------------------------------------------------------- simulación
@@ -785,7 +793,7 @@ add_to(['cowl'], [CLOAK] + SLEEVES)
 
 # ---------------------------------------------------------------- capucha (esculpida)
 def hood():
-    W, R_arc = 0.135, 0.216
+    W, R_arc = 0.142, 0.227
     zb, zs = 1.48, 1.62
     nb, na = 16, 34
     rim = []
@@ -804,8 +812,8 @@ def hood():
     ry = -0.085 - 0.105 * hfrac ** 1.3 + 0.035 * (np.abs(rim[:, 0]) / W) ** 2
     O_left = np.stack([rim[:, 0], ry, rim[:, 1]], 1)
     # costura central: del ápice, sube a la punta, baja por la nuca
-    seam_pts = [(0, -0.19, 1.82), (0, -0.125, 1.92), (0, -0.05, 2.0), (0, 0.025, 2.055),
-                (0, 0.13, 1.94), (0, 0.20, 1.76), (0, 0.19, 1.59), (0, 0.155, 1.47)]
+    seam_pts = [(0, -0.20, 1.83), (0, -0.13, 1.93), (0, -0.055, 2.01), (0, 0.02, 2.07),
+                (0, 0.11, 1.95), (0, 0.175, 1.78), (0, 0.175, 1.60), (0, 0.145, 1.47)]
     seam = catmull(seam_pts, 40)
     # correspondencia por fracción de arco
     def arcfrac(Pp):
@@ -832,15 +840,16 @@ def hood():
         dist = np.linalg.norm(v, axis=1)
         n = v / dist[:, None]
         w = math.sin(math.pi * t) ** 0.7
-        Rt = 0.20 + 0.025 * (1 - q_full)
+        Rt = 0.195 + 0.02 * (1 - q_full)
         r = dist + fspan * (w * np.maximum(0, Rt - dist) + 0.012 * math.sin(math.pi * t))
         p = Hc + n * r[:, None]
         # pliegues suaves en la parte baja (donde la tela se junta sobre el cuello)
         fold = fspan * 0.011 * np.sin(2 * math.pi * (3.2 * t + 2.0 * q_full)) * (1 - q_full) ** 1.6 * math.sin(math.pi * t)
         p = p + n * fold[:, None]
         # se angosta hacia arriba: silueta ojival que termina en punta
-        zr = np.clip((p[:, 2] - 1.72) / 0.30, 0, 1)
-        p[:, 0] *= 1 - 0.42 * zr ** 1.3
+        zr = np.clip((p[:, 2] - 1.66) / 0.40, 0, 1)
+        p[:, 0] *= 1 - 0.45 * zr ** 1.5
+        p[:, 1] = 0.0 + (p[:, 1] - 0.0) * (1 - 0.22 * zr ** 1.5)
         P[j] = p
     nv, nu = NT, nrim
     ob = mesh_obj('capucha', P.reshape(-1, 3), grid_faces(nv, nu), C_CHAR)
@@ -879,7 +888,7 @@ def cowl():
     for i, (z, rx, ry, yc) in enumerate(rows):
         P[i, :, 0] = rx * np.sin(a)
         P[i, :, 1] = yc - ry * np.cos(a)
-        P[i, :, 2] = z
+        P[i, :, 2] = z - 0.045 * np.cos(a) * (1 - i / (nv - 1)) ** 0.5  # adelante más bajo: escote en V suave
     ob = mesh_obj('cuello', P.reshape(-1, 3), grid_faces(nv, NU, closed_u=True), C_CHAR)
     orient(ob, lambda c: (0, 0.02, c.z - 0.25))
     su, sv, utot = arc_lengths(P, closed_u=True)
@@ -916,44 +925,61 @@ for e in EYES:
     e.location = c
 
 def hand(name, W, E, sgn):
-    """Mano enguantada estilizada: palma+dedos juntos en una sola pieza curvada, con surcos suaves entre dedos, y pulgar."""
+    """Mano enguantada: palma redondeada + cuatro dedos de tres falanges (relajados, apenas abiertos) + pulgar."""
     bm = bmesh.new()
-    L, Wd, Th = 0.175, 0.082, 0.030
-    res = bmesh.ops.create_uvsphere(bm, u_segments=40, v_segments=20, radius=1.0)
-    for v in res['verts']:
-        x = (v.co.x * 0.5 + 0.5) * L
-        y = v.co.y * Wd / 2
-        z = v.co.z * Th / 2
-        # muñeca más angosta, dedos un poco más finos
-        y *= 0.78 + 0.22 * min(1, x / 0.05) - 0.12 * max(0, (x - 0.10) / 0.075)
-        z *= 0.85 + 0.15 * min(1, x / 0.05) - 0.25 * max(0, (x - 0.12) / 0.055)
-        # surcos entre dedos en el dorso y la palma
-        if x > 0.095:
-            k = min(1, (x - 0.095) / 0.02)
-            z *= 1 - 0.18 * k * abs(math.cos(math.pi * 2 * (y / (Wd * 0.9)) * 2)) ** 3
-        # curvatura de los dedos hacia la palma (-z)
-        if x > 0.085:
-            ang = (x - 0.085) * 7.0
-            rx, rz = x - 0.085, z
-            x = 0.085 + rx * math.cos(ang) + rz * math.sin(ang)
-            z = -rx * math.sin(ang) + rz * math.cos(ang)
-        v.co = Vector((x, y, z))
-    res = bmesh.ops.create_uvsphere(bm, u_segments=20, v_segments=10, radius=1.0)
-    thumb_m = Matrix.Translation((0.055, 0.040, -0.010)) @ Matrix.Rotation(math.radians(40), 4, 'Z') @ Matrix.Rotation(math.radians(-20), 4, 'Y')
-    for v in res['verts']:
-        v.co = thumb_m @ Vector((v.co.x * 0.040, v.co.y * 0.013, v.co.z * 0.012))
+    def blob(c, r, seg=16, rings=8):
+        res = bmesh.ops.create_uvsphere(bm, u_segments=seg, v_segments=rings, radius=1.0)
+        for v in res['verts']:
+            v.co = Vector((c[0] + v.co.x * r[0], c[1] + v.co.y * r[1], c[2] + v.co.z * r[2]))
+    def seg_(a, b, ra, rb):
+        a, b = Vector(a), Vector(b)
+        d = b - a
+        res = bmesh.ops.create_cone(bm, cap_ends=False, segments=12, radius1=ra, radius2=rb, depth=d.length)
+        m = Matrix.Translation((a + b) / 2) @ d.to_track_quat('Z', 'Y').to_matrix().to_4x4()
+        bmesh.ops.transform(bm, matrix=m, verts=res['verts'])
+    # palma (x hacia los dedos, y = ancho con el pulgar en +y, z = dorso)
+    blob((0.048, 0.0, 0.0), (0.050, 0.040, 0.016), seg=24, rings=12)
+    blob((0.0, 0.0, 0.0), (0.028, 0.030, 0.019), seg=16, rings=8)  # muñeca
+    specs = [  # y, largo de falanges, radio, abertura (grados)
+        (0.027, (0.036, 0.024, 0.020), 0.0088, 5),
+        (0.0095, (0.040, 0.027, 0.021), 0.0092, 1),
+        (-0.0090, (0.038, 0.026, 0.020), 0.0090, -3),
+        (-0.0255, (0.030, 0.020, 0.017), 0.0080, -8),
+    ]
+    for (yy, Ls, rad, spread) in specs:
+        p = Vector((0.090, yy, 0.002))
+        ang = 0.0
+        sp = math.radians(spread)
+        r = rad
+        for k, (Lk, curl) in enumerate(zip(Ls, (14, 24, 22))):
+            ang += math.radians(curl)
+            d = Vector((math.cos(ang) * math.cos(sp), math.sin(sp), -math.sin(ang)))
+            q = p + d * Lk
+            blob(p, (r, r, r * 0.92), seg=12, rings=6)
+            seg_(p, q, r, r * 0.92)
+            p = q
+            r *= 0.92
+        blob(p, (r, r, r * 0.9), seg=12, rings=6)
+    # pulgar
+    t0 = Vector((0.022, 0.030, -0.008))
+    t1 = t0 + Vector((0.026, 0.020, -0.010))
+    t2 = t1 + Vector((0.026, 0.008, -0.008))
+    for a_, b_, ra in ((t0, t1, 0.0125), (t1, t2, 0.0105)):
+        blob(a_, (ra, ra, ra), seg=12, rings=6)
+        seg_(a_, b_, ra, ra * 0.9)
+    blob(t2, (0.0095, 0.0095, 0.009), seg=12, rings=6)
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me); bm.free()
     ob = bpy.data.objects.new(name, me)
     C_CHAR.objects.link(ob)
     # orientación: dedos siguiendo el antebrazo un poco hacia abajo; dorso hacia afuera y arriba; pulgar arriba
     fwd = (W - E).normalized()
-    fwd = (fwd + Vector((0, 0, -0.35))).normalized()
+    fwd = (fwd + Vector((-sgn * 0.15, 0, -0.25))).normalized()
     back = Vector((sgn * 1.0, 0, 0.55)).normalized()
     back = (back - fwd * back.dot(fwd)).normalized()
     side = back.cross(fwd)  # y local = z × x
     R = Matrix((fwd, side, back)).transposed()
-    ob.matrix_world = Matrix.Translation(W + fwd * 0.045) @ R.to_4x4()
+    ob.matrix_world = Matrix.Translation(W + fwd * 0.07) @ R.to_4x4()
     if side.z < 0:  # que el pulgar quede arriba: espejar en y local
         ob.matrix_world = ob.matrix_world @ Matrix.Diagonal((1, -1, 1, 1))
     ob.data.materials.append(M['glove'])
@@ -1009,12 +1035,9 @@ def medallion(c, n):
     ob.matrix_world = Matrix.Translation(c) @ rot
     ob.data.materials.append(M['gold'])
     bev = ob.modifiers.new('Bevel', 'BEVEL'); bev.width = 0.0015; bev.segments = 2
-    gem = ellipsoid('gema', (0, 0, 0), (0.021, 0.021, 0.012), coll=C_FX, seg=24, rings=12)
+    gem = ellipsoid('gema', (0, 0, 0), (0.025, 0.025, 0.011), coll=C_FX, seg=24, rings=12)
     gem.matrix_world = Matrix.Translation(c + n * 0.013) @ rot
     gem.data.materials.append(M['gem'])
-    core = ellipsoid('gema_brillo', (0, 0, 0), (0.008, 0.008, 0.004), coll=C_FX, seg=12, rings=6)
-    core.matrix_world = Matrix.Translation(c + n * 0.024 + Vector((-0.005, 0, 0.005))) @ rot
-    core.data.materials.append(M['gem_core'])
     smooth(gem)
     return ob
 
@@ -1252,7 +1275,7 @@ light('borde_cian', 'AREA', (-1.7, 1.9, 2.3), 420, (0.30, 0.85, 1.0), size=1.2, 
 light('borde_violeta', 'AREA', (1.8, 1.7, 1.9), 330, (0.62, 0.38, 1.0), size=1.2, target=(0, 0, 1.2))
 light('relleno', 'AREA', (2.2, -2.5, 1.2), 70, (0.35, 0.45, 0.9), size=2.0, target=(0, 0, 1.1))
 light('piso_glow', 'POINT', (0, -0.2, 0.15), 25, (0.25, 0.75, 1.0), size=0.6)
-light('gema_luz', 'POINT', tuple(MED_C + mnor * 0.06), 0.9, (0.25, 0.6, 1.0), size=0.02)
+light('gema_luz', 'POINT', tuple(MED_C + mnor * 0.10), 0.12, (0.25, 0.6, 1.0), size=0.02)
 light('ojos_luz', 'POINT', (0, -0.115, 1.665), 0.25, (0.4, 0.9, 1.0), size=0.02)
 
 world = bpy.data.worlds.new('noche')
