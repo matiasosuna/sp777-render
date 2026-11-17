@@ -25,11 +25,13 @@ ap.add_argument('--cache', default='')
 ap.add_argument('--chunk', type=int, default=0)
 ap.add_argument('--nchunks', type=int, default=1)
 ap.add_argument('--samples', type=int, default=0)
+ap.add_argument('--look', default='pixar', choices=['pixar', 'anime'])
 ap.add_argument('--bvh', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'taichi_cmu12_04.bvh'))
 args = ap.parse_args(argv)
 OUT = os.path.abspath(args.out)
 os.makedirs(OUT, exist_ok=True)
 random.seed(7)
+LOOK = args.look
 
 FPS = 30
 PRE = 31            # cuadros 1..30: la tela se acomoda mientras la pose pasa del reposo al mocap
@@ -266,7 +268,41 @@ def mixc(nt, fac, c1, c2):
             nt.links.new(c, sock)
     return n.outputs[0]
 
+class _Wrap:
+    def __init__(self, out):
+        self.outputs = [out]; self.inputs = {}
+
+RIM_VECS = []
+def toon_bsdf(nt, color, gold=None):
+    """Anime: difuso plano (el corte en bandas se hace en el compositor sobre la pasada DiffDir) + borde cian emisivo."""
+    df = N(nt, 'ShaderNodeBsdfDiffuse')
+    if isinstance(color, tuple):
+        df.inputs['Color'].default_value = (*color, 1)
+    else:
+        nt.links.new(color, df.inputs['Color'])
+    lw = N(nt, 'ShaderNodeLayerWeight'); lw.inputs['Blend'].default_value = 0.5
+    geo = N(nt, 'ShaderNodeNewGeometry')
+    rv = N(nt, 'ShaderNodeCombineXYZ'); RIM_VECS.append(rv)
+    dp = N(nt, 'ShaderNodeVectorMath', operation='DOT_PRODUCT')
+    nt.links.new(geo.outputs['Normal'], dp.inputs[0]); nt.links.new(rv.outputs[0], dp.inputs[1])
+    side = math_(nt, 'GREATER_THAN', dp.outputs['Value'], val=-0.25)
+    edge = math_(nt, 'GREATER_THAN', lw.outputs['Facing'], val=0.66)
+    rim = math_(nt, 'MULTIPLY', math_(nt, 'MULTIPLY', side, edge), val=0.8)
+    em = N(nt, 'ShaderNodeEmission'); em.inputs['Color'].default_value = (0.22, 0.85, 1.0, 1)
+    nt.links.new(rim, em.inputs['Strength'])
+    add = N(nt, 'ShaderNodeAddShader')
+    nt.links.new(df.outputs[0], add.inputs[0]); nt.links.new(em.outputs[0], add.inputs[1])
+    if gold is not None:
+        eg = N(nt, 'ShaderNodeEmission'); eg.inputs['Color'].default_value = (*GOLD, 1)
+        nt.links.new(math_(nt, 'MULTIPLY', gold, val=0.30), eg.inputs['Strength'])
+        add2 = N(nt, 'ShaderNodeAddShader')
+        nt.links.new(add.outputs[0], add2.inputs[0]); nt.links.new(eg.outputs[0], add2.inputs[1])
+        add = add2
+    return _Wrap(add.outputs[0])
+
 def fabric_bsdf(nt, color, gold=None, rough=0.85, sheen=0.6, bump=0.25):
+    if LOOK == 'anime':
+        return toon_bsdf(nt, color, gold)
     bs = N(nt, 'ShaderNodeBsdfPrincipled')
     if isinstance(color, tuple):
         bs.inputs['Base Color'].default_value = (*color, 1)
@@ -337,8 +373,13 @@ def plain_mat(name, color, rough=0.85, sheen=0.5, metal=0.0, bump=0.25):
     mat = bpy.data.materials.new(name)
     nt = nodes_clear(mat)
     out = N(nt, 'ShaderNodeOutputMaterial')
-    bs = fabric_bsdf(nt, color, rough=rough, sheen=sheen, bump=bump)
-    bs.inputs['Metallic'].default_value = metal
+    if LOOK == 'anime' and metal > 0:
+        one = N(nt, 'ShaderNodeValue'); one.outputs[0].default_value = 1.0
+        bs = toon_bsdf(nt, color, gold=one.outputs[0])
+    else:
+        bs = fabric_bsdf(nt, color, rough=rough, sheen=sheen, bump=bump)
+    if 'Metallic' in bs.inputs:
+        bs.inputs['Metallic'].default_value = metal
     nt.links.new(bs.outputs[0], out.inputs['Surface'])
     return mat
 
@@ -475,6 +516,11 @@ toe_rest = min(JN['LeftToeBase'].z, JN['RightToeBase'].z)
 F0 = toe_rest - 0.03  # piso en coordenadas de B
 B.location = Vector((HIPS0.x, HIPS0.y, FLOOR - F0))
 B.rotation_euler = (0, 0, YAW)
+_rim = Matrix.Rotation(YAW, 3, 'Z') @ Vector((0.0, 1.0, 0.3)).normalized()
+for rv in RIM_VECS:
+    rv.inputs[0].default_value, rv.inputs[1].default_value, rv.inputs[2].default_value = _rim
+if LOOK == 'anime':
+    M['gem'].node_tree.nodes['Emission'].inputs['Strength'].default_value = 6.0
 
 # B copia las rotaciones de mundo de A; entra de a poco en los cuadros de preparación
 for pb in B.pose.bones:
@@ -1055,7 +1101,14 @@ def sky():
     nt.links.new(cs.outputs[0], add.inputs['Color2'])
     nt.links.new(add.outputs[0], bg.inputs['Color'])
     bg.inputs['Strength'].default_value = 1.0
-    nt.links.new(bg.outputs[0], out.inputs['Surface'])
+    if LOOK == 'anime':
+        lp = N(nt, 'ShaderNodeLightPath'); bk = N(nt, 'ShaderNodeBackground'); bk.inputs['Color'].default_value = (0, 0, 0, 1)
+        mx = N(nt, 'ShaderNodeMixShader')
+        nt.links.new(lp.outputs['Is Camera Ray'], mx.inputs['Fac'])
+        nt.links.new(bk.outputs[0], mx.inputs[1]); nt.links.new(bg.outputs[0], mx.inputs[2])
+        nt.links.new(mx.outputs[0], out.inputs['Surface'])
+    else:
+        nt.links.new(bg.outputs[0], out.inputs['Surface'])
 sky()
 
 def floor_material():
@@ -1100,6 +1153,120 @@ light('borde_izq', 'AREA', (-1.5, 1.8, 1.4), 650, (0.35, 0.65, 1.0), size=1.5, t
 light('borde_der', 'AREA', (1.6, 1.7, 1.2), 550, (0.45, 0.55, 1.0), size=1.5, target_local=(0, 0, 0.3))
 light('techo', 'AREA', (0, -0.4, 2.6), 120, (0.6, 0.7, 1.0), size=1.2, target_local=(0, 0, 0.5))
 light('ojos_luz', 'POINT', tuple(head_center() + Vector((0, -0.13, 0.0))), 0.6, (0.3, 1.0, 0.9), size=0.03)
+
+# ======================================================================= look anime: sol duro + círculo de runas pintado
+def stroke(m, x0, y0, x1, y1, w):
+    H, W = m.shape
+    pad = w + 2
+    xa, xb = int(max(0, min(x0, x1) - pad)), int(min(W, max(x0, x1) + pad + 1))
+    ya, yb = int(max(0, min(y0, y1) - pad)), int(min(H, max(y0, y1) + pad + 1))
+    if xa >= xb or ya >= yb:
+        return
+    yy, xx = np.mgrid[ya:yb, xa:xb].astype(np.float32)
+    dx, dy = x1 - x0, y1 - y0
+    t = np.clip(((xx - x0) * dx + (yy - y0) * dy) / (dx * dx + dy * dy + 1e-9), 0, 1)
+    d = np.hypot(xx - x0 - t * dx, yy - y0 - t * dy)
+    m[ya:yb, xa:xb] = np.maximum(m[ya:yb, xa:xb], np.clip(w * 0.5 + 0.75 - d, 0, 1))
+
+def box_blur(a, r):
+    for ax in (0, 1):
+        c = np.cumsum(np.pad(a, [(r + 1, r) if k == ax else (0, 0) for k in range(2)], mode='edge'), axis=ax)
+        a = (np.take(c, range(2 * r + 1, c.shape[ax]), axis=ax) - np.take(c, range(0, c.shape[ax] - 2 * r - 1), axis=ax)) / (2 * r + 1)
+    return a
+
+def rune_circle_image(S=2048, seed=3):
+    yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
+    c = S / 2
+    r = np.hypot(xx - c, yy - c) / (S / 2)  # 0 centro, 1 borde
+    m = np.zeros((S, S), np.float32)
+    px = S / 2
+    def ring(R, w):
+        np.maximum(m, np.clip(w * 0.5 + 0.75 - np.abs(r - R) * px, 0, 1), out=m)
+    for R, w in ((0.96, 7), (0.93, 3), (0.74, 5), (0.71, 2.5), (0.50, 3), (0.47, 2), (0.22, 3)):
+        ring(R, w)
+    rng = random.Random(seed)
+    # runas entre 0.75 y 0.92
+    n = 28
+    for k in range(n):
+        g = rng.choice(RUNES)
+        th = 2 * math.pi * k / n
+        rad = np.array([math.cos(th), math.sin(th)]); tan = np.array([-math.sin(th), math.cos(th)])
+        hgt, wid = 0.13 * px, 0.085 * px
+        for (u0, v0, u1, v1) in g:
+            p0 = c + rad * (0.765 * px + v0 * hgt) + tan * ((u0 - 0.5) * wid)
+            p1 = c + rad * (0.765 * px + v1 * hgt) + tan * ((u1 - 0.5) * wid)
+            stroke(m, p0[0], p0[1], p1[0], p1[1], 6)
+    # marcas radiales entre los anillos medios
+    for k in range(72):
+        th = 2 * math.pi * k / 72
+        L = 0.06 if k % 6 == 0 else 0.03
+        a0 = c + np.array([math.cos(th), math.sin(th)]) * 0.50 * px
+        a1 = c + np.array([math.cos(th), math.sin(th)]) * (0.50 + L) * px
+        stroke(m, a0[0], a0[1], a1[0], a1[1], 3 if k % 6 else 5)
+    # puntos sobre el anillo interior y arcos de órbita
+    for k in range(12):
+        th = 2 * math.pi * (k + 0.5) / 12
+        q = c + np.array([math.cos(th), math.sin(th)]) * 0.355 * px
+        d = np.hypot(xx - q[0], yy - q[1])
+        np.maximum(m, np.clip(9 - d, 0, 1), out=m)
+    glow = box_blur(box_blur(box_blur(m, 10), 10), 10)
+    fill = np.clip(1.0 - r, 0, 1) ** 0.6 * (r < 0.96) * 0.10
+    alpha = np.clip(m + glow * 1.4 + fill, 0, 1)
+    col = np.array([0.25, 0.85, 1.0], np.float32)
+    rgb = (m[..., None] * 1.6 + glow[..., None] * 1.2) * col + fill[..., None] * np.array([0.10, 0.12, 0.45], np.float32)
+    px4 = np.concatenate([rgb, alpha[..., None]], -1).astype(np.float32)
+    img = bpy.data.images.new('circulo_runas', S, S, alpha=True, float_buffer=True)
+    img.pixels.foreach_set(px4.ravel())
+    img.update(); img.pack()
+    return img
+
+def decal_mat(name, img, strength):
+    mat = bpy.data.materials.new(name)
+    mat.blend_method = 'BLEND'
+    nt = nodes_clear(mat)
+    out = N(nt, 'ShaderNodeOutputMaterial')
+    tx = N(nt, 'ShaderNodeTexImage', image=img, interpolation='Cubic')
+    em = N(nt, 'ShaderNodeEmission'); em.inputs['Strength'].default_value = strength
+    nt.links.new(tx.outputs['Color'], em.inputs['Color'])
+    tr = N(nt, 'ShaderNodeBsdfTransparent')
+    mx = N(nt, 'ShaderNodeMixShader')
+    nt.links.new(tx.outputs['Alpha'], mx.inputs['Fac'])
+    nt.links.new(tr.outputs[0], mx.inputs[1]); nt.links.new(em.outputs[0], mx.inputs[2])
+    nt.links.new(mx.outputs[0], out.inputs['Surface'])
+    return mat
+
+def quad(name, size, mat):
+    h = size / 2
+    ob = mesh_obj(name, [(-h, -h, 0), (h, -h, 0), (h, h, 0), (-h, h, 0)], [(0, 1, 2, 3)], C_ENV)
+    set_uv(ob, 'UVMap', [(0, 0), (1, 0), (1, 1), (0, 1)])
+    ob.data.materials.append(mat)
+    ob.visible_diffuse = False; ob.visible_glossy = False; ob.visible_shadow = False
+    return ob
+
+BG_PLANE = None
+if LOOK == 'anime':
+    for o in list(scene.objects):
+        if o.type == 'LIGHT':
+            o.hide_render = True
+    sd = bpy.data.lights.new('sol', 'SUN'); sd.energy = 1.0; sd.angle = math.radians(1.0); sd.color = (1.0, 0.97, 0.92)
+    so = bpy.data.objects.new('sol', sd); scene.collection.objects.link(so)
+    so.rotation_euler = (B.matrix_world.to_3x3() @ Vector((-1.4, -2.2, 2.0))).to_track_quat('Z', 'Y').to_euler()
+    FLOOR_OB.hide_render = True
+    t = time.time()
+    IMG_CIRC = rune_circle_image()
+    log('círculo de runas %.1fs' % (time.time() - t))
+    BG_PLANE = quad('fondo_circulo', 2.7, decal_mat('fondo_circulo', IMG_CIRC, 1.0))
+    ground = quad('piso_circulo', 2.0, decal_mat('piso_circulo', IMG_CIRC, 0.8))
+    ground.location = (B.location.x, B.location.y, FLOOR + 0.004)
+
+def place_bg(camo):
+    if BG_PLANE is None:
+        return
+    bpy.context.view_layer.update()
+    ctr = B.matrix_world @ Vector((0, 0, ZHD - 0.20))
+    d = (ctr - camo.location).normalized()
+    BG_PLANE.location = ctr + d * 2.3
+    BG_PLANE.rotation_euler = (-d).to_track_quat('Z', 'Y').to_euler()
 
 # ======================================================================= cámaras (en el marco del personaje)
 def cam(name, az_deg, dist, height, target_z, lens):
@@ -1147,10 +1314,63 @@ for n in list(ct.nodes):
 rl = ct.nodes.new('CompositorNodeRLayers')
 gl = ct.nodes.new('CompositorNodeGlare'); gl.glare_type = 'FOG_GLOW'; gl.quality = 'HIGH'; gl.size = 7; gl.threshold = 1.0; gl.mix = 0.0
 comp = ct.nodes.new('CompositorNodeComposite')
-ct.links.new(rl.outputs['Image'], gl.inputs['Image']); ct.links.new(gl.outputs['Image'], comp.inputs['Image'])
+VIEWER = None
+if LOOK == 'pixar':
+    ct.links.new(rl.outputs['Image'], gl.inputs['Image'])
+else:
+    vl = scene.view_layers[0]
+    vl.use_pass_diffuse_direct = True; vl.use_pass_diffuse_color = True; vl.use_pass_emit = True; vl.use_pass_environment = True
+    vl.cycles.denoising_store_passes = True
+    cy.use_denoising = False
+    scene.view_settings.view_transform = 'Standard'; scene.view_settings.exposure = 0.0
+    # tinta: Freestyle como pasada aparte
+    scene.render.use_freestyle = True
+    scene.render.line_thickness_mode = 'ABSOLUTE'; scene.render.line_thickness = 1.0
+    vl.use_freestyle = True
+    fs = vl.freestyle_settings
+    fs.as_render_pass = True
+    fs.crease_angle = math.radians(128)
+    ls = fs.linesets.active if len(fs.linesets) else fs.linesets.new('tinta')
+    ls.select_by_visibility = True; ls.visibility = 'VISIBLE'
+    ls.select_by_edge_types = True
+    ls.select_silhouette = True; ls.select_border = True; ls.select_crease = True; ls.select_contour = True
+    ls.select_by_collection = True; ls.collection = C_CHAR; ls.collection_negation = 'INCLUSIVE'
+    lst = ls.linestyle or bpy.data.linestyles.new('tinta')
+    ls.linestyle = lst
+    lst.color = (0.006, 0.008, 0.025); lst.thickness = 2.6; lst.alpha = 1.0
+    try:
+        tm = lst.thickness_modifiers.new('afinar', 'ALONG_STROKE'); tm.mapping = 'CURVE'; tm.blend = 'MULTIPLY'
+        cm = tm.curve; pts = cm.curves[0].points
+        pts[0].location = (0, 0.35); pts[1].location = (1, 0.35); pts.new(0.5, 1.0); cm.update()
+    except Exception as e:
+        log('modificador de grosor no disponible:', e)
+    dn = ct.nodes.new('CompositorNodeDenoise')
+    ct.links.new(rl.outputs['DiffDir'], dn.inputs['Image'])
+    ct.links.new(rl.outputs['Denoising Normal'], dn.inputs['Normal'])
+    bw = ct.nodes.new('CompositorNodeRGBToBW'); ct.links.new(dn.outputs[0], bw.inputs[0])
+    ramp = ct.nodes.new('CompositorNodeValToRGB')
+    cr = ramp.color_ramp; cr.interpolation = 'CONSTANT'
+    cr.elements[0].position = 0.0; cr.elements[0].color = (0.30, 0.27, 0.55, 1)
+    cr.elements[1].position = 0.10; cr.elements[1].color = (0.68, 0.68, 0.86, 1)
+    e3 = cr.elements.new(0.42); e3.color = (1.0, 1.0, 1.0, 1)
+    ct.links.new(bw.outputs[0], ramp.inputs['Fac'])
+    mul = ct.nodes.new('CompositorNodeMixRGB'); mul.blend_type = 'MULTIPLY'; mul.inputs['Fac'].default_value = 1.0
+    ct.links.new(ramp.outputs['Image'], mul.inputs[1]); ct.links.new(rl.outputs['DiffCol'], mul.inputs[2])
+    gain = ct.nodes.new('CompositorNodeMixRGB'); gain.blend_type = 'MULTIPLY'; gain.inputs['Fac'].default_value = 1.0
+    ct.links.new(mul.outputs[0], gain.inputs[1]); gain.inputs[2].default_value = (1.7, 1.7, 1.7, 1)
+    a1 = ct.nodes.new('CompositorNodeMixRGB'); a1.blend_type = 'ADD'; a1.inputs['Fac'].default_value = 1.0
+    ct.links.new(gain.outputs[0], a1.inputs[1]); ct.links.new(rl.outputs['Emit'], a1.inputs[2])
+    a2 = ct.nodes.new('CompositorNodeMixRGB'); a2.blend_type = 'ADD'; a2.inputs['Fac'].default_value = 1.0
+    ct.links.new(a1.outputs[0], a2.inputs[1]); ct.links.new(rl.outputs['Env'], a2.inputs[2])
+    ao = ct.nodes.new('CompositorNodeAlphaOver')
+    ct.links.new(a2.outputs[0], ao.inputs[1]); ct.links.new(rl.outputs['Freestyle'], ao.inputs[2])
+    ct.links.new(ao.outputs[0], gl.inputs['Image'])
+    VIEWER = ct.nodes.new('CompositorNodeViewer'); ct.links.new(bw.outputs[0], VIEWER.inputs[0])
+ct.links.new(gl.outputs['Image'], comp.inputs['Image'])
 
 def render_frame(f, camo, path, samples):
     scene.camera = camo
+    place_bg(camo)
     cy.samples = samples
     scene.frame_set(f)
     apply_cache(f)
@@ -1159,6 +1379,13 @@ def render_frame(f, camo, path, samples):
     t = time.time()
     bpy.ops.render.render(write_still=True)
     log('render cuadro %d en %.1fs -> %s' % (f, time.time() - t, os.path.basename(path)))
+    if VIEWER is not None and args.stage != 'render':
+        try:
+            v = np.array(bpy.data.images['Viewer Node'].pixels[:], np.float32).reshape(-1, 4)[:, 0]
+            v = v[v > 1e-4]
+            log('  luz difusa (percentiles 10/50/90/99):', np.round(np.percentile(v, [10, 50, 90, 99]), 3))
+        except Exception as e:
+            log('  sin datos del visor:', e)
 
 if args.stage == 'sim':
     # una foto rápida de control (media resolución)

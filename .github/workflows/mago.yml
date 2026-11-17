@@ -10,14 +10,22 @@ on:
       samples:
         description: 'muestras por cuadro del video'
         default: '20'
+      look:
+        description: 'pixar o anime'
+        default: 'pixar'
+      sim_run:
+        description: 'id de un run anterior para reusar su simulación (vacío = simular de nuevo)'
+        default: ''
 permissions:
   contents: read
+  actions: read
 env:
   BLENDER_VERSION: '4.2.23'
   BLENDER_SERIES: '4.2'
   RUN_BLENDER: ~/blender/blender -b --factory-startup --python-exit-code 1 --python blender/mago.py --
 jobs:
   sim:
+    if: inputs.sim_run == ''
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -45,7 +53,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p out
-          time eval $RUN_BLENDER --stage sim --out out 2>&1 | tee out/log_sim.txt
+          time eval $RUN_BLENDER --stage sim --look ${{ inputs.look }} --out out 2>&1 | tee out/log_sim.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -54,6 +62,7 @@ jobs:
           retention-days: 14
   stills:
     needs: sim
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -65,11 +74,13 @@ jobs:
         with:
           name: sim
           path: sim
+          run-id: ${{ inputs.sim_run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Render stills
         run: |
           set -o pipefail
           mkdir -p out
-          time eval $RUN_BLENDER --stage stills --cache sim/sim.npz --out out 2>&1 | tee out/log_stills.txt
+          time eval $RUN_BLENDER --stage stills --look ${{ inputs.look }} --cache sim/sim.npz --out out 2>&1 | tee out/log_stills.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -78,7 +89,7 @@ jobs:
           retention-days: 14
   render:
     needs: sim
-    if: inputs.video == 'true'
+    if: ${{ !failure() && !cancelled() && inputs.video == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -94,11 +105,13 @@ jobs:
         with:
           name: sim
           path: sim
+          run-id: ${{ inputs.sim_run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Render frames
         run: |
           set -o pipefail
           mkdir -p out
-          time eval $RUN_BLENDER --stage render --cache sim/sim.npz --chunk ${{ matrix.chunk }} --nchunks 12 \
+          time eval $RUN_BLENDER --stage render --look ${{ inputs.look }} --cache sim/sim.npz --chunk ${{ matrix.chunk }} --nchunks 12 \
             --samples ${{ inputs.samples }} --out out 2>&1 | tee out/log_render.txt
       - uses: actions/upload-artifact@v4
         with:
