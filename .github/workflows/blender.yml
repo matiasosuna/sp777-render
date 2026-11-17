@@ -39,6 +39,7 @@ jobs:
           sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libegl1 libxkbcommon0 libsm6 libice6 >/dev/null
       - name: Render
         run: |
+          set -o pipefail
           mkdir -p out
           nproc
           time ~/blender/blender -b --factory-startup --python-exit-code 1 \

@@ -225,7 +225,7 @@ def trim_image(name, vertical):
     img.pixels.foreach_set(px.ravel())
     img.update()
     img.pack()
-    log('textura %s: media %.3f' % (name, float(np.mean(img.pixels[::4][:200000]))))
+    log('textura %s: media %.3f' % (name, float(np.mean(m))))
     return img
 
 IMG_H = trim_image('trim_h', vertical=False)
