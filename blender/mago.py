@@ -300,7 +300,7 @@ def toon_bsdf(nt, color, gold=None):
         add = add2
     return _Wrap(add.outputs[0])
 
-def fabric_bsdf(nt, color, gold=None, rough=0.85, sheen=0.6, bump=0.25):
+def fabric_bsdf(nt, color, gold=None, rough=0.85, sheen=0.35, bump=0.25):
     if LOOK == 'anime':
         return toon_bsdf(nt, color, gold)
     bs = N(nt, 'ShaderNodeBsdfPrincipled')
@@ -427,10 +427,10 @@ M['robe'] = robe_mat()
 M['robe_in'] = plain_mat('tunica_dentro', (0.005, 0.005, 0.012))
 M['rope'] = plain_mat('soga', (0.30, 0.17, 0.075), rough=0.7, sheen=0.3, bump=0.6)
 M['gold'] = plain_mat('oro', (0.85, 0.60, 0.25), rough=0.3, sheen=0.0, metal=1.0, bump=0.0)
-M['skin'] = plain_mat('piel', (0.50, 0.34, 0.26), rough=0.55, sheen=0.1, bump=0.05)
-M['face'] = plain_mat('cara', (0.002, 0.002, 0.003), rough=1.0, sheen=0.0, bump=0.0)
+M['skin'] = plain_mat('piel', (0.62, 0.43, 0.35), rough=0.6, sheen=0.1, bump=0.05)
+M['face'] = emit_mat('cara', (0.0, 0.0, 0.0), 0.0)
 M['eye'] = emit_mat('ojos', (0.25, 1.0, 0.92), 14.0)
-M['gem'] = emit_mat('gema', (0.10, 0.85, 0.95), 2.6)
+M['gem'] = emit_mat('gema', (0.05, 0.75, 0.95), 1.6)
 
 # ======================================================================= esqueleto: importar BVH y retarget
 fps_save = scene.render.fps
@@ -606,7 +606,7 @@ def collider(name, specs, extra=0.0):
     add_armature(ob)
     ob.modifiers.new('Collision', 'COLLISION')
     ob.collision.thickness_outer = 0.006
-    ob.collision.cloth_friction = 6.0
+    ob.collision.cloth_friction = 0.8
     ob.hide_render = True
     return ob
 
@@ -627,6 +627,8 @@ hipsph = [('Hips', JN['Hips'] + Vector((0, 0, -0.04)), JN['Hips'] + Vector((0, 0
 COL_BODY = collider('col_cuerpo', torso + legs + hipsph)
 COL_ARMS = collider('col_brazos', arms)
 COL_FAT = collider('col_piernas_anchas', legs + hipsph, extra=0.035)
+COL_SH = collider('col_hombros', torso[:3] + [a for a in arms if a[0].endswith('Arm')], extra=0.05)
+CC['cape'] = bpy.data.collections.new('cc_cape')
 
 bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, FLOOR))
 FLOOR_OB = bpy.context.active_object; FLOOR_OB.name = 'piso'
@@ -635,9 +637,9 @@ for c in list(FLOOR_OB.users_collection):
 C_ENV.objects.link(FLOOR_OB)
 FLOOR_OB.modifiers.new('Collision', 'COLLISION')
 FLOOR_OB.collision.thickness_outer = 0.004
-FLOOR_OB.collision.cloth_friction = 15.0
+FLOOR_OB.collision.cloth_friction = 4.0
 
-for k, obs in (('robe', [COL_BODY, FLOOR_OB]), ('coat', [COL_FAT, COL_BODY, COL_ARMS, FLOOR_OB]), ('sleeve', [COL_ARMS, COL_BODY])):
+for k, obs in (('robe', [COL_BODY, FLOOR_OB]), ('coat', [COL_FAT, COL_BODY, COL_ARMS, FLOOR_OB]), ('sleeve', [COL_ARMS, COL_BODY]), ('cape', [COL_SH, COL_ARMS])):
     for o in obs:
         CC[k].objects.link(o)
 
@@ -685,7 +687,7 @@ def cloth_mod(ob, key, *, mass=0.3, tension=15, bending=0.5, shear=5, air=1.5, q
 # --- túnica interior
 def make_robe():
     keys = [(Z1 + 0.03, 0.150, 0.110, YC), (ZS, 0.150, 0.115, YC), (ZH + 0.03, 0.160, 0.118, J['Hips'].y),
-            (ZH - 0.08, 0.200, 0.150, J['Hips'].y), (F0 + 0.45, 0.240, 0.190, J['Hips'].y), (HEM - 0.01, 0.275, 0.215, J['Hips'].y)]
+            (ZH - 0.08, 0.200, 0.150, J['Hips'].y), (F0 + 0.45, 0.255, 0.200, J['Hips'].y), (HEM - 0.02, 0.300, 0.230, J['Hips'].y)]
     NU, NV = 96, 54
     P = ring_rows(keys, NV, NU)
     ob = mesh_obj('tunica', P.reshape(-1, 3), grid_faces(NV, NU, closed_u=True))
@@ -710,7 +712,7 @@ def make_coat():
         (ZSH + 0.040, 0.160, 0.115, ycs, 0.36),
         (ZSH - 0.025, 0.186, 0.130, ycs, 0.40),
         (Z1 - 0.06, 0.190, 0.135, ycs, 0.44),
-        (ZH, 0.212, 0.160, J['Hips'].y, 0.48),
+        (ZH, 0.228, 0.172, J['Hips'].y, 0.48),
         (F0 + 0.40, 0.290, 0.225, J['Hips'].y, 0.52),
         (HEM, 0.340, 0.265, J['Hips'].y, 0.54),
     ]
@@ -747,7 +749,7 @@ def make_sleeve(side, sgn):
     Nn = np.cross(T[0], [0, -1.0, 0]); Nn /= np.linalg.norm(Nn)
     seglen = np.linalg.norm(np.diff(path, axis=0), axis=1)
     s = np.concatenate([[0], np.cumsum(seglen)]); fr = s / s[-1]
-    rk = np.array([(0, 0.085), (0.30, 0.088), (0.55, 0.098), (0.80, 0.130), (1.0, 0.165)])
+    rk = np.array([(0, 0.072), (0.30, 0.070), (0.55, 0.085), (0.80, 0.122), (1.0, 0.160)])
     r = np.interp(fr, rk[:, 0], rk[:, 1])
     a = np.linspace(0, 2 * np.pi, nu, endpoint=False)
     P = np.zeros((nv, nu, 3))
@@ -765,7 +767,7 @@ def make_sleeve(side, sgn):
     dcuff = sv[-1][None, :] - sv
     set_uv(ob, 'trim', np.stack([dcuff, su], -1))
     set_uv(ob, 'kind', np.zeros((nv * nu, 2)))
-    pw = 1.0 - 0.75 * smoothstep(0.40, 1.0, fr)
+    pw = 1.0 - 0.92 * smoothstep(0.25, 0.95, fr)
     vgroup(ob, 'pin', np.arange(nv * nu), np.repeat(pw, nu))
     skin_prox(ob, [side + 'Shoulder', side + 'Arm', side + 'ForeArm'])
     ob.data.materials.append(M['sleeve']); ob.data.materials.append(M['coat_in'])
@@ -791,7 +793,7 @@ def make_hood():
     hf = (rim[:, 1] - zb) / (rim[-1, 1] - zb)
     ry = -0.080 - 0.11 * hf ** 1.3 + 0.035 * (np.abs(rim[:, 0]) / W) ** 2
     O_left = np.stack([rim[:, 0], ry, rim[:, 1]], 1)
-    seam_pts = [(0, -0.20, 1.83), (0, -0.13, 1.93), (0, -0.055, 2.01), (0, 0.02, 2.07),
+    seam_pts = [(0, -0.20, 1.83), (0, -0.13, 1.93), (0, -0.045, 2.02), (0, 0.06, 2.10),
                 (0, 0.11, 1.95), (0, 0.175, 1.78), (0, 0.18, 1.60), (0, 0.15, 1.46)]
     seam = catmull(seam_pts, 40)
     def arcfrac(Pp):
@@ -815,14 +817,14 @@ def make_hood():
         dist = np.linalg.norm(v, axis=1)
         n = v / dist[:, None]
         w = math.sin(math.pi * t) ** 0.7
-        Rt = 0.200 + 0.025 * (1 - q_full)
+        Rt = 0.180 + 0.022 * (1 - q_full)
         r = dist + fspan * (w * np.maximum(0, Rt - dist) + 0.014 * math.sin(math.pi * t))
         p = Hc + n * r[:, None]
         fold = fspan * 0.010 * np.sin(2 * math.pi * (3.0 * t + 2.0 * q_full)) * (1 - q_full) ** 1.6 * math.sin(math.pi * t)
         p = p + n * fold[:, None]
-        zr = np.clip((p[:, 2] - 1.66) / 0.40, 0, 1)
-        p[:, 0] *= 1 - 0.40 * zr ** 1.5
-        p[:, 1] *= 1 - 0.20 * zr ** 1.5
+        zr = np.clip((p[:, 2] - 1.64) / 0.44, 0, 1)
+        p[:, 0] *= 1 - 0.55 * zr ** 1.1
+        p[:, 1] = 0.03 + (p[:, 1] - 0.03) * (1 - 0.30 * zr ** 1.1)
         # abajo se abre un poco sobre los hombros
         lo = np.clip((1.56 - p[:, 2]) / 0.10, 0, 1)
         p[:, 0] *= 1 + 0.35 * lo
@@ -862,6 +864,19 @@ def make_head():
     return [ob, eyes]
 
 # --- manos (piel) con dedos
+def voxelize(ob, size):
+    rm = ob.modifiers.new('Remesh', 'REMESH'); rm.mode = 'VOXEL'; rm.voxel_size = size; rm.adaptivity = 0.0
+    sm = ob.modifiers.new('Suave', 'SMOOTH'); sm.factor = 0.5; sm.iterations = 4
+    deps = bpy.context.evaluated_depsgraph_get()
+    me2 = bpy.data.meshes.new_from_object(ob.evaluated_get(deps))
+    old = ob.data
+    ob.modifiers.clear()
+    ob.data = me2
+    for m in old.materials:
+        me2.materials.append(m)
+    bpy.data.meshes.remove(old)
+    smooth(ob)
+
 def make_hand(side, sgn):
     bm = bmesh.new()
     def blob(c, r, s=12, rr=6):
@@ -898,7 +913,8 @@ def make_hand(side, sgn):
     if Mw.determinant() < 0:
         bmesh.ops.reverse_faces(bm, faces=bm.faces[:])
     ob = bm_to_obj(bm, 'mano_' + side)
-    ob.data.materials.append(M['skin']); smooth(ob)
+    ob.data.materials.append(M['skin'])
+    voxelize(ob, 0.0022)
     me = ob.data
     P = np.array([v.co for v in me.vertices])
     t = smoothstep(-0.005, 0.03, (P - np.array(Wr)) @ np.array(fwd))
@@ -927,12 +943,16 @@ def make_foot(side, sgn):
         rr = (0.013, 0.0095, 0.009, 0.0085, 0.008)[k]
         pos = base + fwd * (0.012 - abs(off) * 0.55) + Rm.col[1] * (off * -sgn) + Vector((0, 0, rr * 0.9))
         bm_ellipsoid(bm, pos, (rr * 1.5, rr, rr * 0.9), 12, 6, M=Rm)
+    # canilla (por si la túnica se levanta)
+    bm_capsule(bm, J[side + 'Leg'] + (ank - J[side + 'Leg']) * 0.25, ank + Vector((0, 0, 0.02)), 0.042, 0.033, seg=16)
     ob = bm_to_obj(bm, 'pie_' + side)
-    ob.data.materials.append(M['skin']); smooth(ob)
+    ob.data.materials.append(M['skin'])
+    voxelize(ob, 0.003)
     P = np.array([v.co for v in ob.data.vertices])
     t = smoothstep(-0.01, 0.025, (P - np.array(toe)) @ np.array(fwd))
+    up = smoothstep(ank.z + 0.0, ank.z + 0.06, P[:, 2])
     idx = np.arange(len(P))
-    vgroup(ob, side + 'ToeBase', idx, t); vgroup(ob, side + 'Foot', idx, 1 - t)
+    vgroup(ob, side + 'ToeBase', idx, t * (1 - up)); vgroup(ob, side + 'Foot', idx, (1 - t) * (1 - up)); vgroup(ob, side + 'Leg', idx, up)
     sb = ob.modifiers.new('Sub', 'SUBSURF'); sb.levels = 1; sb.render_levels = 1
     return ob
 
@@ -940,7 +960,7 @@ def make_foot(side, sgn):
 def make_rope():
     bm = bmesh.new()
     zc = ZH + 0.085
-    rx, ry, yc = 0.168, 0.128, (YC + J['Hips'].y) / 2
+    rx, ry, yc = 0.158, 0.121, (YC + J['Hips'].y) / 2
     n = 160
     for k, dz in enumerate((-0.033, -0.011, 0.011, 0.033)):
         prev = None
@@ -993,6 +1013,30 @@ def make_medallion():
         skin_rigid(o, 'Spine1')
     return [ob, gem]
 
+def make_cape():
+    NU, NV = 96, 22
+    keys = [(ZN + 0.025, 0.080, 0.078, YC + 0.01, 0.34), (ZSH + 0.045, 0.165, 0.135, YC + 0.005, 0.40),
+            (ZSH - 0.02, 0.235, 0.180, YC, 0.46), (ZSH - 0.085, 0.265, 0.205, YC, 0.50)]
+    P = ring_rows(keys, NV, NU, open_angle=True)
+    a = np.arctan2(P[..., 0], -(P[..., 1] - YC))  # 0 adelante, ±pi atrás
+    back = np.clip(-np.cos(a), 0, 1) ** 2
+    t = np.linspace(0, 1, NV)[:, None] ** 1.5
+    P[..., 2] -= 0.17 * back * t
+    ob = mesh_obj('esclavina', P.reshape(-1, 3), grid_faces(NV, NU))
+    flip_if(ob, lambda p: (0, YC, p.center.z))
+    su, sv, ut = arc_lengths(P)
+    dfront = np.minimum(su, ut[:, None] - su)
+    dhem = sv[-1][None, :] - sv
+    set_uv(ob, 'trim', np.stack([np.minimum(dfront, dhem), np.where(dfront < dhem, sv, su)], -1))
+    set_uv(ob, 'kind', np.ones((NV * NU, 2)))
+    z = P[..., 2]
+    pw = smoothstep(ZSH + 0.005, ZSH + 0.05, z)
+    vgroup(ob, 'pin', np.arange(pw.size), pw.ravel())
+    skin_prox(ob, ['Spine1', 'Neck', 'Neck1', 'LeftShoulder', 'RightShoulder', 'LeftArm', 'RightArm'])
+    ob.data.materials.append(M['hood']); ob.data.materials.append(M['coat_in'])
+    smooth(ob)
+    return ob
+
 log('modelando')
 ROBE_OB = make_robe()
 COAT = make_coat()
@@ -1003,7 +1047,8 @@ HANDS = [make_hand('Left', 1), make_hand('Right', -1)]
 FEET = [make_foot('Left', 1), make_foot('Right', -1)]
 ROPE = make_rope()
 MEDS = make_medallion()
-CLOTH = [ROBE_OB, COAT] + SLEEVES
+CAPE = make_cape()
+CLOTH = [ROBE_OB, COAT] + SLEEVES + [CAPE]
 SKINNED = [HOOD, ROPE] + HEADS + HANDS + FEET + MEDS
 for ob in SKINNED:
     add_armature(ob)
@@ -1016,6 +1061,12 @@ if args.stage == 'sim':
     cloth_mod(COAT, 'coat', mass=0.30, tension=25, bending=1.0, shear=8, air=1.5, quality=7, self_col=True, dist=0.007)
     for sl in SLEEVES:
         cloth_mod(sl, 'sleeve', mass=0.18, tension=15, bending=0.5, air=1.2, self_col=True, pin_stiff=0.6)
+    cloth_mod(CAPE, 'cape', mass=0.2, tension=20, bending=2.0, air=1.2, dist=0.008)
+    # la capa choca también con la túnica (ya simulada) y con la soga
+    for o in (ROBE_OB, ROPE):
+        cm = o.modifiers.new('Collision', 'COLLISION')
+        o.collision.thickness_outer = 0.006; o.collision.cloth_friction = 0.5
+        CC['coat'].objects.link(o)
     scene.frame_start = 1; scene.frame_end = LAST
     bpy.context.view_layer.update()
     cache = {ob.name: np.zeros((NCLIP, len(ob.data.vertices), 3), np.float32) for ob in CLOTH}
@@ -1059,9 +1110,14 @@ for ob in CLOTH:
 finish(COAT, 0.010, 1); finish(ROBE_OB, 0.006, 1)
 for sl in SLEEVES:
     finish(sl, 0.008, 1)
+finish(CAPE, 0.009, 1)
 finish(HOOD, 0.014, 2)
+for o in (ROBE_OB, ROPE):
+    for m in list(o.modifiers):
+        if m.type == 'COLLISION':
+            o.modifiers.remove(m)
 ROPE.modifiers.new('Sub', 'SUBSURF').render_levels = 1
-for o in (COL_BODY, COL_ARMS, COL_FAT):
+for o in (COL_BODY, COL_ARMS, COL_FAT, COL_SH):
     o.hide_viewport = True
 
 # ======================================================================= entorno: cielo estrellado, piso, luces
@@ -1122,7 +1178,7 @@ def floor_material():
     dx = math_(nt, 'SUBTRACT', sx.outputs['X'], val=hx); dy = math_(nt, 'SUBTRACT', sx.outputs['Y'], val=hy)
     nt.links.new(dx, cx.inputs['X']); nt.links.new(dy, cx.inputs['Y'])
     ln = N(nt, 'ShaderNodeVectorMath', operation='LENGTH'); nt.links.new(cx.outputs[0], ln.inputs[0])
-    bs = fabric_bsdf(nt, (0.035, 0.042, 0.065), rough=0.9, sheen=0.0, bump=0.0)
+    bs = fabric_bsdf(nt, (0.012, 0.015, 0.028), rough=0.9, sheen=0.0, bump=0.0)
     fade = N(nt, 'ShaderNodeMapRange'); fade.inputs['From Min'].default_value = 1.6; fade.inputs['From Max'].default_value = 5.0
     fade.interpolation_type = 'SMOOTHSTEP'
     nt.links.new(ln.outputs['Value'], fade.inputs['Value'])
@@ -1147,11 +1203,11 @@ def light(name, typ, loc_local, energy, color, size=1.0, target_local=(0, 0, 0.0
     return lo
 
 bpy.context.view_layer.update()
-light('clave', 'AREA', (-1.6, -2.6, 1.6), 520, (0.82, 0.86, 1.0), size=2.2, target_local=(0, 0, 0.2))
-light('relleno', 'AREA', (2.4, -2.2, 0.4), 120, (0.45, 0.55, 0.95), size=2.5, target_local=(0, 0, 0.0))
+light('clave', 'AREA', (-1.6, -2.6, 1.6), 380, (0.82, 0.86, 1.0), size=2.2, target_local=(0, 0, 0.2))
+light('relleno', 'AREA', (2.4, -2.2, 0.4), 50, (0.45, 0.55, 0.95), size=2.5, target_local=(0, 0, 0.0))
 light('borde_izq', 'AREA', (-1.5, 1.8, 1.4), 650, (0.35, 0.65, 1.0), size=1.5, target_local=(0, 0, 0.4))
 light('borde_der', 'AREA', (1.6, 1.7, 1.2), 550, (0.45, 0.55, 1.0), size=1.5, target_local=(0, 0, 0.3))
-light('techo', 'AREA', (0, -0.4, 2.6), 120, (0.6, 0.7, 1.0), size=1.2, target_local=(0, 0, 0.5))
+light('techo', 'AREA', (0, -0.4, 2.6), 40, (0.6, 0.7, 1.0), size=1.2, target_local=(0, 0, 0.5))
 light('ojos_luz', 'POINT', tuple(head_center() + Vector((0, -0.13, 0.0))), 0.6, (0.3, 1.0, 0.9), size=0.03)
 
 # ======================================================================= look anime: sol duro + círculo de runas pintado
@@ -1305,7 +1361,7 @@ scene.render.resolution_x = 1080; scene.render.resolution_y = 1920; scene.render
 scene.render.image_settings.file_format = 'PNG'; scene.render.image_settings.color_mode = 'RGB'
 scene.view_settings.view_transform = 'AgX'
 scene.view_settings.look = 'None'
-scene.view_settings.exposure = 0.6
+scene.view_settings.exposure = -0.35
 
 scene.use_nodes = True
 ct = scene.node_tree
