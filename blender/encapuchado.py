@@ -218,12 +218,14 @@ def trim_image(name, vertical):
         h, w = Lpx, Wpx
     else:
         h, w = Wpx, Lpx
-    img = bpy.data.images.new(name, w, h, alpha=False)
+    img = bpy.data.images.new(name, w, h, alpha=False, float_buffer=True)
+    img.colorspace_settings.name = 'Non-Color'  # antes de cargar píxeles: cambiarlo después recarga y borra la imagen
     px = np.ones((h, w, 4), np.float32)
     px[..., 0] = px[..., 1] = px[..., 2] = m
     img.pixels.foreach_set(px.ravel())
-    img.colorspace_settings.name = 'Non-Color'
+    img.update()
     img.pack()
+    log('textura %s: media %.3f' % (name, float(np.mean(img.pixels[::4][:200000]))))
     return img
 
 IMG_H = trim_image('trim_h', vertical=False)
@@ -379,26 +381,52 @@ def emit_mat(name, color, strength):
     return mat
 
 M = {}
-M['cloak'] = toon_mat('capa', (0.020, 0.032, 0.095), rim=(0.25, 0.7, 1.0), rim_k=0.30, trim=True)
-M['cloak_in'] = toon_mat('capa_forro', (0.15, 0.035, 0.25), rim=(0.6, 0.3, 1.0), rim_k=0.25, amb=0.30, trim=True, line_only=True)
-M['hood'] = toon_mat('capucha', (0.024, 0.028, 0.085), rim=(0.25, 0.7, 1.0), rim_k=0.30, trim=True)
-M['hood_in'] = toon_mat('capucha_dentro', (0.010, 0.006, 0.020), rim_k=0.0, amb=0.15, trim=True, line_only=True)
-M['cowl'] = toon_mat('cuello', (0.024, 0.028, 0.085), rim=(0.25, 0.7, 1.0), rim_k=0.30, trim=True)
+M['cloak'] = toon_mat('capa', (0.020, 0.032, 0.095), rim=(0.25, 0.7, 1.0), rim_k=0.18, trim=True)
+M['cloak_in'] = toon_mat('capa_forro', (0.10, 0.022, 0.17), rim=(0.6, 0.3, 1.0), rim_k=0.15, amb=0.25, trim=True, line_only=True)
+M['hood'] = toon_mat('capucha', (0.024, 0.028, 0.085), rim=(0.25, 0.7, 1.0), rim_k=0.22, trim=True)
+M['hood_in'] = toon_mat('capucha_dentro', (0.006, 0.004, 0.012), rim_k=0.0, amb=0.1, trim=True, line_only=True)
+M['cowl'] = toon_mat('cuello', (0.024, 0.028, 0.085), rim=(0.25, 0.7, 1.0), rim_k=0.2, trim=True)
 M['cowl_in'] = toon_mat('cuello_dentro', (0.06, 0.015, 0.10), rim_k=0.1, trim=True, line_only=True)
 M['robe'] = toon_mat('tunica', (0.010, 0.011, 0.032), rim=(0.4, 0.4, 1.0), rim_k=0.2, trim=True)
 M['robe_in'] = toon_mat('tunica_dentro', (0.006, 0.005, 0.014), rim_k=0.0)
 M['sleeve'] = toon_mat('manga', (0.016, 0.016, 0.050), rim=(0.3, 0.6, 1.0), rim_k=0.3, trim=True)
 M['sleeve_in'] = toon_mat('manga_forro', (0.12, 0.03, 0.21), rim_k=0.15, amb=0.3, trim=True, line_only=True)
-M['sash'] = toon_mat('fajin', (0.17, 0.035, 0.28), rim=(0.7, 0.4, 1.0), rim_k=0.25)
-M['glove'] = toon_mat('guante', (0.030, 0.022, 0.026), rim=(0.3, 0.7, 1.0), rim_k=0.35)
+M['sash'] = toon_mat('fajin', (0.10, 0.022, 0.17), rim=(0.7, 0.4, 1.0), rim_k=0.15)
+M['glove'] = toon_mat('guante', (0.055, 0.042, 0.050), rim=(0.3, 0.7, 1.0), rim_k=0.3, amb=0.3)
 M['face'] = toon_mat('cara', (0.004, 0.004, 0.008), rim_k=0.0, amb=0.0)
-M['floor'] = toon_mat('piso', (0.010, 0.013, 0.035), rim_k=0.0, amb=0.15)
+def floor_mat():
+    mat = bpy.data.materials.new('piso')
+    nt = nodes_clear(mat)
+    out = N(nt, 'ShaderNodeOutputMaterial')
+    geo = N(nt, 'ShaderNodeNewGeometry')
+    sxyz = N(nt, 'ShaderNodeSeparateXYZ'); nt.links.new(geo.outputs['Position'], sxyz.inputs[0])
+    cxy = N(nt, 'ShaderNodeCombineXYZ')
+    nt.links.new(sxyz.outputs['X'], cxy.inputs['X']); nt.links.new(sxyz.outputs['Y'], cxy.inputs['Y'])
+    ln = N(nt, 'ShaderNodeVectorMath', operation='LENGTH'); nt.links.new(cxy.outputs[0], ln.inputs[0])
+    mr = N(nt, 'ShaderNodeMapRange'); mr.inputs['From Min'].default_value = 0.6; mr.inputs['From Max'].default_value = 5.0
+    mr.interpolation_type = 'SMOOTHSTEP'
+    nt.links.new(ln.outputs['Value'], mr.inputs['Value'])
+    mix = N(nt, 'ShaderNodeMixRGB', blend_type='MIX')
+    nt.links.new(mr.outputs[0], mix.inputs['Fac'])
+    mix.inputs['Color1'].default_value = (0.020, 0.030, 0.075, 1)
+    mix.inputs['Color2'].default_value = (0.003, 0.004, 0.011, 1)
+    toon = N(nt, 'ShaderNodeBsdfToon', component='DIFFUSE')
+    toon.inputs['Size'].default_value = 0.7; toon.inputs['Smooth'].default_value = 0.1
+    nt.links.new(mix.outputs[0], toon.inputs['Color'])
+    em = N(nt, 'ShaderNodeEmission'); em.inputs['Strength'].default_value = 0.6
+    nt.links.new(mix.outputs[0], em.inputs['Color'])
+    add = N(nt, 'ShaderNodeAddShader')
+    nt.links.new(toon.outputs[0], add.inputs[0]); nt.links.new(em.outputs[0], add.inputs[1])
+    nt.links.new(add.outputs[0], out.inputs['Surface'])
+    return mat
+
+M['floor'] = floor_mat()
 M['gold'] = gold_mat()
 M['eye'] = emit_mat('ojos', (0.55, 0.95, 1.0), 28.0)
-M['gem'] = emit_mat('gema', (0.15, 0.55, 1.0), 9.0)
-M['gem_core'] = emit_mat('gema_brillo', (0.8, 0.95, 1.0), 25.0)
-M['rune'] = emit_mat('runas', (0.25, 0.8, 1.0), 5.0)
-M['rune_floor'] = emit_mat('runas_piso', (0.25, 0.75, 1.0), 3.0)
+M['gem'] = emit_mat('gema', (0.08, 0.45, 1.0), 2.2)
+M['gem_core'] = emit_mat('gema_brillo', (0.6, 0.9, 1.0), 4.0)
+M['rune'] = emit_mat('runas', (0.25, 0.8, 1.0), 2.6)
+M['rune_floor'] = emit_mat('runas_piso', (0.25, 0.75, 1.0), 1.8)
 M['spark'] = emit_mat('chispas', (0.5, 0.9, 1.0), 9.0)
 
 # ---------------------------------------------------------------- cuerpo invisible (colisionadores)
@@ -613,9 +641,9 @@ def band_ring(name, z0, z1, rx, ry, yc, bulge, mat, nu=96, nv=6):
     smooth(ob)
     return ob
 
-SASH = band_ring('fajin', 0.975, 1.07, 0.183, 0.146, 0.010, 0.05, M['sash'])
-BELT = band_ring('cinturon', 1.064, 1.082, 0.190, 0.152, 0.010, 0.02, M['gold'], nv=3)
-KNOT = ellipsoid('nudo', (-0.075, -0.150, 1.02), (0.038, 0.028, 0.034), coll=C_CHAR, seg=20, rings=12)
+SASH = band_ring('fajin', 0.985, 1.058, 0.181, 0.144, 0.010, 0.06, M['sash'])
+BELT = band_ring('cinturon', 1.056, 1.066, 0.186, 0.149, 0.010, 0.0, M['gold'], nv=3)
+KNOT = ellipsoid('nudo', (-0.075, -0.152, 1.015), (0.030, 0.020, 0.026), coll=C_CHAR, seg=20, rings=12)
 KNOT.data.materials.append(M['sash'])
 smooth(KNOT)
 for ob in (SASH, KNOT):
@@ -685,7 +713,7 @@ for nm, (S, E, W, sgn) in ARM.items():
 
 def ribbon(name, top, length, width, angle, nv=26, nu=5):
     verts = []
-    dirv = Vector((math.sin(angle), -0.12, -math.cos(angle))).normalized()
+    dirv = Vector((math.sin(angle), -0.45, -math.cos(angle))).normalized()
     side = Vector((1, 0, 0))
     for i in range(nv):
         for j in range(nu):
@@ -696,11 +724,11 @@ def ribbon(name, top, length, width, angle, nv=26, nu=5):
     add_pin(ob, list(range(0, 2 * nu)))
     ob.data.materials.append(M['sash'])
     smooth(ob)
-    cloth(ob, 'sash', mass=0.08, tension=15, bending=0.3, air=2.0, frames=frames(60))
+    cloth(ob, 'sash', mass=0.08, tension=15, bending=0.08, air=1.0, frames=frames(60))
     return ob
 
-RIBBONS = [ribbon('fajin_punta_1', (-0.088, -0.168, 0.990), 0.46, 0.055, 0.10),
-           ribbon('fajin_punta_2', (-0.058, -0.172, 0.988), 0.38, 0.050, -0.06)]
+RIBBONS = [ribbon('fajin_punta_1', (-0.092, -0.166, 0.995), 0.50, 0.068, 0.22),
+           ribbon('fajin_punta_2', (-0.060, -0.170, 0.992), 0.40, 0.060, -0.12)]
 add_to(['sash'], [ROBE, SASH])
 log('simulando mangas y fajín')
 run_sim(SLEEVES + RIBBONS, frames(60), 'mangas')
@@ -758,7 +786,7 @@ add_to(['cowl'], [CLOAK] + SLEEVES)
 # ---------------------------------------------------------------- capucha (esculpida)
 def hood():
     W, R_arc = 0.135, 0.216
-    zb, zs = 1.50, 1.62
+    zb, zs = 1.48, 1.62
     nb, na = 16, 34
     rim = []
     for k in range(nb):  # tramo recto de abajo (izquierda, x<0)
@@ -776,8 +804,8 @@ def hood():
     ry = -0.085 - 0.105 * hfrac ** 1.3 + 0.035 * (np.abs(rim[:, 0]) / W) ** 2
     O_left = np.stack([rim[:, 0], ry, rim[:, 1]], 1)
     # costura central: del ápice, sube a la punta, baja por la nuca
-    seam_pts = [(0, -0.19, 1.82), (0, -0.115, 1.905), (0, -0.01, 1.968), (0, 0.06, 1.99),
-                (0, 0.15, 1.90), (0, 0.205, 1.74), (0, 0.19, 1.59), (0, 0.155, 1.50)]
+    seam_pts = [(0, -0.19, 1.82), (0, -0.125, 1.92), (0, -0.05, 2.0), (0, 0.025, 2.055),
+                (0, 0.13, 1.94), (0, 0.20, 1.76), (0, 0.19, 1.59), (0, 0.155, 1.47)]
     seam = catmull(seam_pts, 40)
     # correspondencia por fracción de arco
     def arcfrac(Pp):
@@ -804,12 +832,15 @@ def hood():
         dist = np.linalg.norm(v, axis=1)
         n = v / dist[:, None]
         w = math.sin(math.pi * t) ** 0.7
-        Rt = 0.215 + 0.02 * (1 - q_full)
+        Rt = 0.20 + 0.025 * (1 - q_full)
         r = dist + fspan * (w * np.maximum(0, Rt - dist) + 0.012 * math.sin(math.pi * t))
         p = Hc + n * r[:, None]
         # pliegues suaves en la parte baja (donde la tela se junta sobre el cuello)
         fold = fspan * 0.011 * np.sin(2 * math.pi * (3.2 * t + 2.0 * q_full)) * (1 - q_full) ** 1.6 * math.sin(math.pi * t)
         p = p + n * fold[:, None]
+        # se angosta hacia arriba: silueta ojival que termina en punta
+        zr = np.clip((p[:, 2] - 1.72) / 0.30, 0, 1)
+        p[:, 0] *= 1 - 0.42 * zr ** 1.3
         P[j] = p
     nv, nu = NT, nrim
     ob = mesh_obj('capucha', P.reshape(-1, 3), grid_faces(nv, nu), C_CHAR)
@@ -834,11 +865,11 @@ HOOD = hood()
 # ---------------------------------------------------------------- 4. cuello / capelina
 def cowl():
     keys = [  # z, rx, ry, yc
-        (1.52, 0.160, 0.145, 0.020),
-        (1.51, 0.240, 0.200, 0.020),
+        (1.52, 0.150, 0.138, 0.020),
+        (1.51, 0.235, 0.195, 0.020),
         (1.47, 0.340, 0.280, 0.020),
-        (1.38, 0.450, 0.360, 0.020),
-        (1.28, 0.530, 0.430, 0.020),
+        (1.39, 0.480, 0.390, 0.020),
+        (1.29, 0.600, 0.490, 0.020),
     ]
     rows = resample(catmull(keys, 30), 26, cols=[0, 1])
     NU = 132
@@ -850,7 +881,7 @@ def cowl():
         P[i, :, 1] = yc - ry * np.cos(a)
         P[i, :, 2] = z
     ob = mesh_obj('cuello', P.reshape(-1, 3), grid_faces(nv, NU, closed_u=True), C_CHAR)
-    orient(ob, lambda c: (0, 0.02, c.z + 0.3))
+    orient(ob, lambda c: (0, 0.02, c.z - 0.25))
     su, sv, utot = arc_lengths(P, closed_u=True)
     bw = 0.04
     d = sv[-1][None, :] - sv
@@ -863,11 +894,11 @@ def cowl():
 
 log('construyendo cuello')
 COWL = cowl()
-cloth(COWL, 'cowl', mass=0.2, tension=20, bending=0.7, air=3.0, self_col=True, dist=0.006, frames=frames(70))
+cloth(COWL, 'cowl', mass=0.2, tension=20, bending=0.3, air=3.0, self_col=True, dist=0.006, frames=frames(70))
 run_sim([COWL], frames(70), 'cuello')
 
 # ---------------------------------------------------------------- cara, ojos, manos
-FACE = ellipsoid('cara', HEAD_C + Vector((0, -0.005, 0)), (0.083, 0.098, 0.113), coll=C_CHAR)
+FACE = ellipsoid('cara', HEAD_C + Vector((0, -0.005, 0)), (0.083, 0.098, 0.113), coll=C_FX)
 FACE.data.materials.append(M['face'])
 smooth(FACE)
 EYES = []
@@ -885,35 +916,32 @@ for e in EYES:
     e.location = c
 
 def hand(name, W, E, sgn):
+    """Mano enguantada estilizada: palma+dedos juntos en una sola pieza curvada, con surcos suaves entre dedos, y pulgar."""
     bm = bmesh.new()
-    def box(c, size):
-        r = bmesh.ops.create_cube(bm, size=1.0)
-        for v in r['verts']:
-            v.co = Vector((c[0] + v.co.x * size[0], c[1] + v.co.y * size[1], c[2] + v.co.z * size[2]))
-    def capsule(a, b, rad):
-        a, b = Vector(a), Vector(b)
-        d = b - a
-        r = bmesh.ops.create_cone(bm, cap_ends=True, segments=10, radius1=rad, radius2=rad * 0.9, depth=d.length)
-        m = Matrix.Translation((a + b) / 2) @ d.to_track_quat('Z', 'Y').to_matrix().to_4x4()
-        bmesh.ops.transform(bm, matrix=m, verts=r['verts'])
-    # marco local: x = hacia los dedos, y = ancho (pulgar en +y), z = dorso
-    box((0.045, 0, 0), (0.085, 0.078, 0.026))
-    capsule((-0.03, 0, 0), (0.02, 0, 0), 0.026)  # muñeca
-    for k, yy in enumerate((0.028, 0.0095, -0.0095, -0.027)):
-        L1 = (0.040, 0.044, 0.042, 0.034)[k]
-        L2 = (0.034, 0.038, 0.036, 0.028)[k]
-        a = Vector((0.085, yy, 0.0))
-        c1 = math.radians(18 + 6 * k)
-        b = a + Vector((math.cos(c1) * L1, 0, -math.sin(c1) * L1))
-        c2 = math.radians(48 + 6 * k)
-        c = b + Vector((math.cos(c2) * L2, 0, -math.sin(c2) * L2))
-        capsule(a, b, 0.0098)
-        capsule(b, c, 0.0088)
-    t0 = Vector((0.02, 0.036, -0.006))
-    t1 = t0 + Vector((0.035, 0.022, -0.012))
-    t2 = t1 + Vector((0.030, 0.004, -0.016))
-    capsule(t0, t1, 0.012)
-    capsule(t1, t2, 0.010)
+    L, Wd, Th = 0.175, 0.082, 0.030
+    res = bmesh.ops.create_uvsphere(bm, u_segments=40, v_segments=20, radius=1.0)
+    for v in res['verts']:
+        x = (v.co.x * 0.5 + 0.5) * L
+        y = v.co.y * Wd / 2
+        z = v.co.z * Th / 2
+        # muñeca más angosta, dedos un poco más finos
+        y *= 0.78 + 0.22 * min(1, x / 0.05) - 0.12 * max(0, (x - 0.10) / 0.075)
+        z *= 0.85 + 0.15 * min(1, x / 0.05) - 0.25 * max(0, (x - 0.12) / 0.055)
+        # surcos entre dedos en el dorso y la palma
+        if x > 0.095:
+            k = min(1, (x - 0.095) / 0.02)
+            z *= 1 - 0.18 * k * abs(math.cos(math.pi * 2 * (y / (Wd * 0.9)) * 2)) ** 3
+        # curvatura de los dedos hacia la palma (-z)
+        if x > 0.085:
+            ang = (x - 0.085) * 7.0
+            rx, rz = x - 0.085, z
+            x = 0.085 + rx * math.cos(ang) + rz * math.sin(ang)
+            z = -rx * math.sin(ang) + rz * math.cos(ang)
+        v.co = Vector((x, y, z))
+    res = bmesh.ops.create_uvsphere(bm, u_segments=20, v_segments=10, radius=1.0)
+    thumb_m = Matrix.Translation((0.055, 0.040, -0.010)) @ Matrix.Rotation(math.radians(40), 4, 'Z') @ Matrix.Rotation(math.radians(-20), 4, 'Y')
+    for v in res['verts']:
+        v.co = thumb_m @ Vector((v.co.x * 0.040, v.co.y * 0.013, v.co.z * 0.012))
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me); bm.free()
     ob = bpy.data.objects.new(name, me)
@@ -925,12 +953,12 @@ def hand(name, W, E, sgn):
     back = (back - fwd * back.dot(fwd)).normalized()
     side = back.cross(fwd)  # y local = z × x
     R = Matrix((fwd, side, back)).transposed()
-    ob.matrix_world = Matrix.Translation(W + fwd * 0.055) @ R.to_4x4()
+    ob.matrix_world = Matrix.Translation(W + fwd * 0.045) @ R.to_4x4()
     if side.z < 0:  # que el pulgar quede arriba: espejar en y local
         ob.matrix_world = ob.matrix_world @ Matrix.Diagonal((1, -1, 1, 1))
     ob.data.materials.append(M['glove'])
     smooth(ob)
-    sub = ob.modifiers.new('Sub', 'SUBSURF'); sub.levels = 2; sub.render_levels = 2
+    sub = ob.modifiers.new('Sub', 'SUBSURF'); sub.levels = 1; sub.render_levels = 1
     return ob
 
 HANDS = [hand('mano_' + nm, W, E, s) for nm, (S, E, W, s) in ARM.items()]
@@ -967,6 +995,8 @@ def medallion(c, n):
         ang = 2 * math.pi * k / 12
         L = 0.022 if k % 2 == 0 else 0.014
         res = bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.008, radius2=0.0005, depth=L)
+        for v in res['verts']:
+            v.co.x *= 0.3
         m = Matrix.Rotation(ang, 4, 'Z') @ Matrix.Translation((0.052 + L / 2 - 0.004, 0, 0)) @ Matrix.Rotation(math.pi / 2, 4, 'Y')
         bmesh.ops.transform(bm, matrix=m, verts=res['verts'])
     res = bmesh.ops.create_cone(bm, cap_ends=True, segments=8, radius1=0.006, radius2=0.006, depth=0.012)
@@ -1076,11 +1106,20 @@ def rune_circle(name, R, r_in, mat, n_runes=24, glyph=0.05, extra_rings=(), star
             sp = cu.splines.new('POLY'); sp.points.add(1)
             sp.points[0].co = (*p0, 1); sp.points[1].co = (*p1, 1)
     if star:
-        pts = [Vector((r_in * math.cos(2 * math.pi * k / star + math.pi / 2), r_in * math.sin(2 * math.pi * k / star + math.pi / 2), 0)) for k in range(star)]
-        step = 3 if star >= 7 else 2
+        # marcas radiales y puntos entre los anillos interiores (sin polígonos estrellados)
+        inner = min(extra_rings) if extra_rings else r_in * 0.7
         for k in range(star):
+            a = 2 * math.pi * k / star + math.pi / 2
+            u = Vector((math.cos(a), math.sin(a), 0))
+            L = (r_in - inner) * (0.55 if k % 2 == 0 else 0.3)
             sp = cu.splines.new('POLY'); sp.points.add(1)
-            sp.points[0].co = (*pts[k], 1); sp.points[1].co = (*pts[(k + step) % star], 1)
+            sp.points[0].co = (*(u * (r_in - 0.008)), 1); sp.points[1].co = (*(u * (r_in - 0.008 - L)), 1)
+        for rr in (inner + (r_in - inner) * 0.25,):
+            n = 96
+            for k in range(0, n, 2):
+                a0 = 2 * math.pi * k / n; a1 = 2 * math.pi * (k + 1) / n
+                sp = cu.splines.new('POLY'); sp.points.add(1)
+                sp.points[0].co = (rr * math.cos(a0), rr * math.sin(a0), 0, 1); sp.points[1].co = (rr * math.cos(a1), rr * math.sin(a1), 0, 1)
     ob = bpy.data.objects.new(name, cu)
     coll.objects.link(ob)
     ob.data.materials.append(mat)
@@ -1101,16 +1140,16 @@ def cam(name, target, dist, height, lens):
     return co
 
 CAM_FULL = cam('cam_cuerpo', (0, 0, 1.06), 3.55, 0.95, 50)
-CAM_CLOSE = cam('cam_capucha', (0, 0, 1.58), 2.3, 1.62, 85)
+CAM_CLOSE = cam('cam_capucha', (0, 0, 1.6), 2.3, 1.52, 85)
 CAM_SIDE = cam('cam_costado', (0, 0, 1.0), 4.2, 1.0, 45)
 CAM_SIDE.location = Vector((4.2, -0.4, 1.0))
 CAM_SIDE.rotation_euler = (Vector((0, 0, 1.0)) - CAM_SIDE.location).to_track_quat('-Z', 'Y').to_euler()
 
 viewdir = Vector((math.sin(AZ), -math.cos(AZ), 0))
-HALO = rune_circle('circulo_runas', 0.74, 0.66, M['rune'], n_runes=28, glyph=0.055, extra_rings=(0.47,), star=8)
+HALO = rune_circle('circulo_runas', 0.74, 0.66, M['rune'], n_runes=28, glyph=0.055, extra_rings=(0.40,), star=24)
 HALO.location = Vector((0, 0, 1.64)) - viewdir * 0.75
 HALO.rotation_euler = viewdir.to_track_quat('Z', 'Y').to_euler()
-GROUND = rune_circle('circulo_piso', 1.05, 0.96, M['rune_floor'], n_runes=36, glyph=0.07, extra_rings=(0.62,), star=7, bevel=0.005)
+GROUND = rune_circle('circulo_piso', 1.05, 0.96, M['rune_floor'], n_runes=36, glyph=0.07, extra_rings=(0.70,), star=36, bevel=0.005)
 GROUND.location = (0, 0.05, 0.004)
 
 # telón con resplandor y estrellas, perpendicular a la vista
