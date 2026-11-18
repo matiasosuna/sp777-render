@@ -2,10 +2,11 @@ name: lam
 run-name: lam ${{ inputs.modo }} ${{ inputs.ref }}
 # Repertorio en láminas HyperFrames (18/11/2026). Una corrida = una tanda de técnicas; un job por técnica, en paralelo.
 # Cada job: voz (si falta o voz_nueva; Chatterbox en CPU con el arreglo de e504242, timeline revisado) → Telegram (voces.json)
-#   → lámina videos/hf/<id>-lam (o <id>-lamina) → render → mp4 a Telegram, reemplazando si ya estaba (telegram.json).
-# Todo se instala una sola vez por job y en paralelo. Los mapas (voces/telegram.json) se leen de la rama `mapas`, no del ref,
-# así un video ya subido se reemplaza en su mensaje y no se duplica. El job no escribe en el repo: deja res.json en el
-# artefacto lam-<id> y juntar.sh (local) lo pasa a voces.json y telegram.json. Los registros no muestran el guion.
+#   → lámina videos/hf/<id>-lam (o <id>-lamina) → render → mp4 entero en el artefacto mp4-<id>.
+# Los videos NO van a Telegram acá: Matías pidió «subir al final las tandas a telegram». Cuando la tanda entera está
+# renderizada y revisada, subir.yml los sube juntos desde estos artefactos (reemplazando si ya había).
+# Todo se instala una sola vez por job y en paralelo. voces.json se lee de la rama `mapas`, no del ref. El job no escribe
+# en el repo: deja res.json en el artefacto lam-<id> y juntar.sh (local) lo pasa a voces.json. Los registros no muestran el guion.
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +17,7 @@ on:
         description: 'ids de técnicas, separados por espacio o coma (máx. 256)'
         required: true
       modo:
-        description: 'video = voz + render + Telegram; hoja = voz + hoja de frases sin render (~3 min); voz = solo la voz'
+        description: 'video = voz + render (sin Telegram: eso es subir.yml); hoja = voz + hoja de frases sin render (~3 min); voz = solo la voz'
         type: choice
         options: [video, hoja, voz]
         default: video
@@ -24,10 +25,6 @@ on:
         description: 'rehacer la voz aunque esté guardada'
         type: boolean
         default: false
-      subir:
-        description: 'video: subir el mp4 a Telegram (reemplaza el mensaje si ya había)'
-        type: boolean
-        default: true
       calidad:
         type: choice
         options: [looks, draft, delivery]
@@ -201,15 +198,6 @@ jobs:
           done
           ffmpeg -v error -y -framerate 1 -i fotos/%02d.png -vf "tile=8x2:padding=4:color=white" -frames:v 1 "salida/$ID-hoja.jpg"
           echo "dur $DUR s, $(cat tiempo.txt)" > salida/info.txt; cat salida/info.txt
-      - name: telegram
-        if: inputs.modo == 'video' && inputs.subir
-        env:
-          LARGA: ${{ steps.voz.outputs.larga }}
-        run: |
-          if [ -n "$LARGA" ]; then echo "voz con palabras largas: no se sube el video (ver chequeo.json)"; exit 0; fi
-          mkdir -p sube && cp out.mp4 "sube/$ID.mp4"
-          FORZAR=1 python practicas/telegram.py subir sube "$ID"
-          python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/telegram.json'));json.dump({i:m[i]},open('tg.json','w'))"
       - name: resultado
         if: always()
         run: |
@@ -218,9 +206,9 @@ jobs:
           l = lambda f: json.load(open(f)) if os.path.exists(f) else {}
           info = open('salida/info.txt').read().strip() if os.path.exists('salida/info.txt') else ''
           json.dump({'id': os.environ['ID'], 'carpeta': os.environ.get('CARPETA', ''), 'modo': os.environ['MODO'],
-                     'video': l('tg.json'), 'voz': l('voz.json'), 'chequeo': l('chequeo.json'), 'info': info}, open('res.json', 'w'))
+                     'voz': l('voz.json'), 'chequeo': l('chequeo.json'), 'info': info}, open('res.json', 'w'))
           EOF
-          cat res.json | python -c "import json,sys;r=json.load(sys.stdin);print('video', bool(r['video']), '| voz nueva', bool(r['voz']), '| largas', len(r['chequeo'].get('largas', [])), '|', r['info'])"
+          cat res.json | python -c "import json,sys;r=json.load(sys.stdin);print('voz nueva', bool(r['voz']), '| largas', len(r['chequeo'].get('largas', [])), '|', r['info'])"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -229,3 +217,10 @@ jobs:
             res.json
             salida/
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: inputs.modo == 'video'
+        with:
+          name: mp4-${{ matrix.id }}
+          path: out.mp4
+          compression-level: 0
+          retention-days: 14

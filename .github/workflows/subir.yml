@@ -1,0 +1,79 @@
+name: subir
+run-name: subir ${{ inputs.runs }}
+# Paso final de una tanda (Matías: «subir al final las tandas a telegram»): cuando todas las láminas de la tanda están
+# renderizadas y revisadas, sube juntos a Telegram los mp4 de los runs de lam.yml (artefactos mp4-<id>).
+# Si el id ya estaba en telegram.json (leído de la rama `mapas` al momento de correr) reemplaza el video en el mismo
+# mensaje; si no, lo manda. No sube ids cuya voz salió con palabras largas. Deja subida.json ({id: …}) en el artefacto
+# `subida`; juntar.sh (local) lo pasa a practicas/telegram.json.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: 'ids de runs de lam.yml, separados por espacio'
+        required: true
+      ids:
+        description: 'solo estas técnicas (vacío = todas las de esos runs)'
+        default: ''
+      mapas:
+        description: 'rama de spiritual-practices de donde leer telegram.json'
+        default: puente/spiritual-practices-777
+permissions:
+  actions: read
+jobs:
+  subir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.mapas }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: practicas
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: bajar los mp4
+        env:
+          RUNS: ${{ inputs.runs }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null &
+          for r in $RUNS; do
+            [[ "$r" =~ ^[0-9]+$ ]] || { echo "run inválido"; exit 1; }
+            for n in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$r/artifacts?per_page=100" --jq '.artifacts[].name | select(test("^(mp4|lam)-"))'); do
+              gh run download "$r" -R "$GITHUB_REPOSITORY" -n "$n" -D "bajado/$r/$n" || echo "$n: no se pudo bajar"
+            done
+          done
+          wait
+      - name: telegram
+        env:
+          SOLO: ${{ inputs.ids }}
+        run: |
+          python - <<'EOF' > ids.txt
+          import json, os, pathlib, re, shutil
+          solo = set(re.split(r'[\s,]+', os.environ['SOLO'].strip())) - {''}
+          sube = pathlib.Path('sube'); sube.mkdir()
+          for mp4 in sorted(pathlib.Path('bajado').glob('*/mp4-*/out.mp4')):
+              i = mp4.parent.name[4:]
+              if solo and i not in solo: continue
+              res = mp4.parent.parent / f'lam-{i}' / 'res.json'
+              r = json.loads(res.read_text()) if res.exists() else {}
+              if r.get('chequeo', {}).get('largas'): print(f'{i}: voz con palabras largas, no se sube', file=__import__('sys').stderr); continue
+              shutil.copy(mp4, sube / f'{i}.mp4')  # si un id está en dos runs, queda el del último
+          print(' '.join(sorted(p.stem for p in sube.glob('*.mp4'))))
+          EOF
+          IDS=$(cat ids.txt); echo "a subir: $IDS"; [ -n "$IDS" ] || exit 1
+          OK=""; for i in $IDS; do FORZAR=1 python practicas/telegram.py subir sube "$i" && OK="$OK $i" || echo "$i: falló"; done
+          OK="$OK" python -c "import json,os;m=json.load(open('practicas/telegram.json'));json.dump({i:m[i] for i in os.environ['OK'].split()},open('subida.json','w'),indent=1)"
+          echo "subidos:$OK"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: subida
+          path: subida.json
+          retention-days: 14
