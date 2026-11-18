@@ -154,7 +154,7 @@ fondoF = fondo.astype(np.float32)
 lum = fondoF.max(axis=2)
 amarF = (fondoF[..., 0] + fondoF[..., 1]) / 2 - fondoF[..., 2]
 brillo = np.clip((lum - 110) / 120, 0, 1) * np.clip((amarF - 15) / 50, 0, 1) * anul
-anillo = np.dstack([fondo, (brillo * 255).astype(np.uint8)])
+anillo = np.dstack([fondo * (brillo[..., None] > 0.004), (brillo * 255).astype(np.uint8)])
 Image.fromarray(anillo, 'RGBA').save(f'{OUT}/anillo.png', optimize=True)
 
 # ---------- 6. ojos, gema, estrellas ----------

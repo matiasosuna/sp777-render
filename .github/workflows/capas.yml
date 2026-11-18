@@ -32,7 +32,7 @@ jobs:
           key: capas-v1
       - name: deps
         run: |
-          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -q "rembg[cpu]" spandrel opencv-python-headless pillow numpy
       - name: capas
         env:
