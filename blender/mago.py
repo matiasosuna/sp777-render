@@ -506,6 +506,15 @@ for side, sgn in (('Left', 1), ('Right', -1)):
     Mx2 = Matrix.Translation(piv2) @ R2 @ Matrix.Translation(-piv2)
     for e in chain(side + 'ForeArm'):
         e.transform(Mx2)
+# 3) piernas derechas (el reposo del BVH de CMU las tiene abiertas) y pies juntos debajo de la túnica
+for side, sgn in (('Left', 1), ('Right', -1)):
+    for root, nxt, tx in ((side + 'UpLeg', side + 'Leg', 0.02), (side + 'Leg', side + 'Foot', 0.0)):
+        piv = eb[root].head.copy()
+        d = (eb[nxt].head - piv).normalized()
+        R = d.rotation_difference(Vector((sgn * tx, 0.0, -1.0)).normalized()).to_matrix().to_4x4()
+        Mx = Matrix.Translation(piv) @ R @ Matrix.Translation(-piv)
+        for e in chain(root):
+            e.transform(Mx)
 bpy.ops.object.mode_set(mode='OBJECT')
 
 JN = {b.name: Vector(b.head_local) for b in B.data.bones}
@@ -769,7 +778,7 @@ def make_sleeve(side, sgn):
     dcuff = sv[-1][None, :] - sv
     set_uv(ob, 'trim', np.stack([dcuff, su], -1))
     set_uv(ob, 'kind', np.zeros((nv * nu, 2)))
-    pw = 1.0 - smoothstep(0.10, 0.42, fr)
+    pw = 1.0 - smoothstep(0.28, 0.62, fr)
     vgroup(ob, 'pin', np.arange(nv * nu), np.repeat(pw, nu))
     skin_prox(ob, [side + 'Shoulder', side + 'Arm', side + 'ForeArm'])
     ob.data.materials.append(M['sleeve']); ob.data.materials.append(M['coat_in'])
@@ -779,7 +788,7 @@ def make_sleeve(side, sgn):
 # --- capucha (esculpida, rígida con la cabeza; abajo se mezcla con el cuello)
 def make_hood():
     HC = head_center()
-    K = 1.18  # capucha grande, estilo Pixar
+    K = 1.10  # capucha grande, estilo Pixar
     W, R_arc = 0.142, 0.227
     zb, zs = 1.48, 1.62  # coordenadas de diseño (cabeza en 1.66)
     nb, na = 16, 34
@@ -796,7 +805,7 @@ def make_hood():
     ry = -0.080 - 0.11 * hf ** 1.3 + 0.035 * (np.abs(rim[:, 0]) / W) ** 2
     O_left = np.stack([rim[:, 0], ry, rim[:, 1]], 1)
     seam_pts = [(0, -0.20, 1.83), (0, -0.13, 1.93), (0, -0.045, 2.02), (0, 0.06, 2.10),
-                (0, 0.11, 1.95), (0, 0.175, 1.78), (0, 0.18, 1.60), (0, 0.15, 1.46)]
+                (0, 0.10, 1.96), (0, 0.150, 1.80), (0, 0.155, 1.62), (0, 0.13, 1.46)]
     seam = catmull(seam_pts, 40)
     def arcfrac(Pp):
         d = np.linalg.norm(np.diff(Pp, axis=0), axis=1)
@@ -1018,7 +1027,7 @@ def make_medallion():
 def make_cape():
     NU, NV = 96, 22
     keys = [(ZN + 0.025, 0.080, 0.078, YC + 0.01, 0.34), (ZSH + 0.045, 0.165, 0.135, YC + 0.005, 0.40),
-            (ZSH - 0.02, 0.235, 0.180, YC, 0.46), (ZSH - 0.085, 0.265, 0.205, YC, 0.50)]
+            (ZSH - 0.02, 0.255, 0.190, YC, 0.46), (ZSH - 0.09, 0.300, 0.225, YC, 0.50)]
     P = ring_rows(keys, NV, NU, open_angle=True)
     a = np.arctan2(P[..., 0], -(P[..., 1] - YC))  # 0 adelante, ±pi atrás
     back = np.clip(-np.cos(a), 0, 1) ** 2
@@ -1050,8 +1059,8 @@ FEET = [make_foot('Left', 1), make_foot('Right', -1)]
 ROPE = make_rope()
 MEDS = make_medallion()
 CAPE = make_cape()
-CLOTH = [ROBE_OB, COAT] + SLEEVES + [CAPE]
-SKINNED = [HOOD, ROPE] + HEADS + HANDS + FEET + MEDS
+CLOTH = [ROBE_OB, COAT] + SLEEVES
+SKINNED = [HOOD, ROPE, CAPE] + HEADS + HANDS + FEET + MEDS
 for ob in SKINNED:
     add_armature(ob)
 
@@ -1060,12 +1069,11 @@ if args.stage == 'sim':
     for ob in CLOTH:
         add_armature(ob)
     cloth_mod(ROBE_OB, 'robe', mass=0.25, tension=25, bending=2.0, shear=8, air=1.5)
-    cloth_mod(COAT, 'coat', mass=0.30, tension=25, bending=1.6, shear=8, air=1.5, quality=7, self_col=True, dist=0.007)
+    cloth_mod(COAT, 'coat', mass=0.30, tension=30, bending=3.0, shear=8, air=1.5, quality=7, self_col=True, dist=0.007)
     for sl in SLEEVES:
         cloth_mod(sl, 'sleeve', mass=0.18, tension=15, bending=0.5, air=1.2, self_col=True, pin_stiff=0.6)
-    cloth_mod(CAPE, 'cape', mass=0.2, tension=20, bending=2.0, air=1.2, dist=0.008)
     # la capa choca también con la túnica (ya simulada) y con la soga
-    for o in (ROBE_OB, ROPE):
+    for o in (ROPE,):
         cm = o.modifiers.new('Collision', 'COLLISION')
         o.collision.thickness_outer = 0.006; o.collision.cloth_friction = 0.5
         CC['coat'].objects.link(o)
