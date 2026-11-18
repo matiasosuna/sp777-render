@@ -3,7 +3,7 @@ name: remotion
 # Pensado para tandas grandes: una instalación por job (node_modules y Chrome Headless Shell en caché),
 # un solo bundle (`remotion bundle`) y muchos renders seguidos desde ese bundle. `partes` > 1 reparte la lista
 # en varios jobs en paralelo. Un número en `frames` saca un cuadro suelto (remotion still) de cada composición;
-# un rango "a-b" o vacío renderiza el mp4. Sube mp4/png, hoja de contactos de 12 cuadros y tiempos. No manda nada a Telegram.
+# un rango "a-b" o vacío renderiza el mp4. Sube mp4/png, hoja de contactos de 20 cuadros y tiempos. No manda nada a Telegram.
 on:
   workflow_dispatch:
     inputs:
@@ -25,6 +25,9 @@ on:
       partes:
         description: 'cuántos jobs en paralelo (1-20)'
         default: '1'
+      voces:
+        description: 'ids de prácticas cuya voz guardada (practicas/voces.json → Telegram) va a public/reel/<id>/ (voz.wav + timeline.json)'
+        default: ''
 permissions: {}
 jobs:
   plan:
@@ -57,6 +60,7 @@ jobs:
       FRAMES: ${{ inputs.frames }}
       ENTRY: ${{ inputs.entry }}
       STILLS: ${{ inputs.stills }}
+      VOCES: ${{ inputs.voces }}
       REMOTION_DISABLE_TELEMETRY: '1'
       npm_config_yes: 'true'
     steps:
@@ -68,6 +72,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             videos/src
+            practicas
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -75,6 +80,7 @@ jobs:
         run: |
           case "$ENTRY" in *..*|/*) echo "entrada inválida"; exit 1;; esac
           echo "$FRAMES" | grep -Eq '^([0-9]+(-[0-9]+)?)?$' || { echo "frames inválido"; exit 1; }
+          echo "$VOCES" | grep -Eq '^[A-Za-z0-9_, -]*$' || { echo "voces inválido"; exit 1; }
           echo "$STILLS" | grep -Eq '^([0-9]+(,[0-9]+)*)?$' || { echo "stills inválido"; exit 1; }
           test -f "videos/$ENTRY"
           echo "T0=$(date +%s)" >> "$GITHUB_ENV"
@@ -99,6 +105,20 @@ jobs:
       - name: ffmpeg
         timeout-minutes: 10
         run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null)
+      - name: voices
+        if: inputs.voces != ''
+        timeout-minutes: 10
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        run: |
+          mkdir -p salida/voces
+          for I in $(echo "$VOCES" | tr ',' ' '); do
+            FID=$(python3 -c "import json,sys;print(json.load(open('practicas/voces.json'))[sys.argv[1]]['file_id'])" "$I")
+            D=videos/public/reel/$I; mkdir -p "$D"
+            python3 practicas/telegram.py bajar "$FID" voz.tgz && tar xzf voz.tgz -C "$D" && rm voz.tgz
+            [ -f "$D/voz.flac" ] && ffmpeg -v error -y -i "$D/voz.flac" "$D/voz.wav" && rm "$D/voz.flac"
+            cp "$D/timeline.json" "salida/voces/$I.json"
+          done
       - name: bundle
         working-directory: videos
         timeout-minutes: 10
@@ -129,14 +149,14 @@ jobs:
           for V in salida/*.mp4; do
             [ -f "$V" ] || continue; C=$(basename "$V" .mp4); D=$(mktemp -d)
             DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V")
-            for k in $(seq 1 12); do
-              ffmpeg -v error -y -ss "$(python3 -c "print($DUR*($k-0.5)/12)")" -i "$V" -frames:v 1 -vf scale=270:-1 "$D/$(printf %02d $k).png"
+            for k in $(seq 1 20); do
+              ffmpeg -v error -y -ss "$(python3 -c "print($DUR*($k-0.5)/20)")" -i "$V" -frames:v 1 -vf scale=270:-1 "$D/$(printf %02d $k).png"
             done
-            ffmpeg -v error -y -framerate 1 -i "$D/%02d.png" -vf tile=4x3 -frames:v 1 "salida/$C-contactos.jpg"
+            ffmpeg -v error -y -framerate 1 -i "$D/%02d.png" -vf tile=5x4 -frames:v 1 "salida/$C-contactos.jpg"
             for n in $(echo "$STILLS" | tr ',' ' '); do
               ffmpeg -v error -y -ss "$(python3 -c "print($n/30)")" -i "$V" -frames:v 1 "salida/$C-cuadro-$n.png"
             done
-            ffmpeg -v error -y -i "$V" -vf scale=540:-2 -c:v libx264 -crf 26 -preset veryfast -an "salida/$C-celu.mp4" || true
+            ffmpeg -v error -y -i "$V" -vf scale=540:-2 -c:v libx264 -crf 26 -preset veryfast -c:a aac -b:a 96k "salida/$C-celu.mp4" || true
           done
       - uses: actions/upload-artifact@v4
         if: always()
