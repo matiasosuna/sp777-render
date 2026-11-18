@@ -159,7 +159,11 @@ jobs:
             for k in $(seq 1 20); do
               ffmpeg -v error -y -ss "$(python3 -c "print($DUR*($k-0.5)/20)")" -i "$V" -frames:v 1 -vf scale=270:-1 "$D/$(printf %02d $k).png"
             done
-            ffmpeg -v error -y -framerate 1 -i "$D/%02d.png" -vf tile=5x4 -frames:v 1 "salida/$C-contactos.jpg"
+            ffmpeg -v error -y -framerate 1 -i "$D/%02d.png" -vf tile=5x4 -frames:v 1 "salida/$C-contactos.jpg" || {
+              # el ffmpeg de Remotion no trae el filtro tile: armar la hoja con Pillow
+              python3 -m pip install -q pillow 2>/dev/null || pip install -q pillow
+              python3 -c "import sys,glob;from PIL import Image;fs=sorted(glob.glob(sys.argv[1]+'/*.png'));im=[Image.open(f).convert('RGB') for f in fs];w,h=im[0].size;H=Image.new('RGB',(w*5,h*4));[H.paste(x,((i%5)*w,(i//5)*h)) for i,x in enumerate(im[:20])];H.save(sys.argv[2],quality=88)" "$D" "salida/$C-contactos.jpg" || true
+            }
             for n in $(echo "$STILLS" | tr ',' ' '); do
               ffmpeg -v error -y -ss "$(python3 -c "print($n/30)")" -i "$V" -frames:v 1 "salida/$C-cuadro-$n.png"
             done
