@@ -697,7 +697,7 @@ def cloth_mod(ob, key, *, mass=0.3, tension=15, bending=0.5, shear=5, air=1.5, q
 
 # --- túnica interior
 def make_robe():
-    keys = [(Z1 + 0.03, 0.150, 0.110, YC), (ZS, 0.150, 0.115, YC), (ZH + 0.03, 0.160, 0.118, J['Hips'].y),
+    keys = [(ZN - 0.005, 0.066, 0.062, YC + 0.005), (ZSH - 0.01, 0.135, 0.100, YC), (Z1 + 0.03, 0.150, 0.110, YC), (ZS, 0.150, 0.115, YC), (ZH + 0.03, 0.160, 0.118, J['Hips'].y),
             (ZH - 0.08, 0.200, 0.150, J['Hips'].y), (F0 + 0.45, 0.255, 0.200, J['Hips'].y), (HEM - 0.02, 0.300, 0.230, J['Hips'].y)]
     NU, NV = 96, 54
     P = ring_rows(keys, NV, NU)
@@ -710,7 +710,7 @@ def make_robe():
     pw = np.maximum(smoothstep(ZH - 0.02, ZH + 0.05, z), smoothstep(Z1 - 0.02, Z1 + 0.02, z))
     pw = np.repeat(pw, NU)
     vgroup(ob, 'pin', np.arange(len(pw)), pw)
-    skin_prox(ob, ['Hips', 'LowerBack', 'Spine', 'Spine1', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg'])
+    skin_prox(ob, ['Hips', 'LowerBack', 'Spine', 'Spine1', 'Neck', 'Neck1', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg'])
     ob.data.materials.append(M['robe']); ob.data.materials.append(M['robe_in'])
     smooth(ob)
     return ob
@@ -719,8 +719,7 @@ def make_robe():
 def make_coat():
     ycs = YC
     keys = [  # z, rx, ry, yc, media apertura
-        (ZN - 0.005, 0.072, 0.068, ycs + 0.005, 0.30),
-        (ZSH + 0.040, 0.160, 0.115, ycs, 0.36),
+        (ZSH + 0.020, 0.150, 0.112, ycs, 0.40),
         (ZSH - 0.025, 0.186, 0.130, ycs, 0.40),
         (Z1 - 0.06, 0.190, 0.135, ycs, 0.44),
         (ZH, 0.228, 0.172, J['Hips'].y, 0.48),
