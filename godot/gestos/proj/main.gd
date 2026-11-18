@@ -180,7 +180,7 @@ func _ready() -> void:
 				continue
 			frentes[nom] = []
 			for suf in ["_frente", "_alto"]:
-				var ruta := dir + nom + suf + ".png"
+				var ruta: String = dir + nom + String(suf) + ".png"
 				if FileAccess.file_exists(ruta):
 					var s := Sprite2D.new()
 					s.texture = tex(ruta)
