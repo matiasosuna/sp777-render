@@ -429,6 +429,7 @@ M['rope'] = plain_mat('soga', (0.30, 0.17, 0.075), rough=0.7, sheen=0.3, bump=0.
 M['gold'] = plain_mat('oro', (0.85, 0.60, 0.25), rough=0.3, sheen=0.0, metal=1.0, bump=0.0)
 M['skin'] = plain_mat('piel', (0.78, 0.58, 0.48), rough=0.6, sheen=0.1, bump=0.05)
 M['face'] = emit_mat('cara', (0.0, 0.0, 0.0), 0.0)
+M['boot'] = plain_mat('botas', (0.020, 0.016, 0.032), rough=0.45, sheen=0.1, bump=0.0)
 M['eye'] = emit_mat('ojos', (0.25, 1.0, 0.92), 14.0)
 M['gem'] = emit_mat('gema', (0.05, 0.75, 0.95), 1.6)
 
@@ -750,7 +751,7 @@ def make_coat():
 def make_sleeve(side, sgn):
     S, E, Wr = J[side + 'Arm'], J[side + 'ForeArm'], J[side + 'Hand']
     fwd = (Wr - E).normalized()
-    top = S + Vector((-sgn * 0.010, 0, 0.035))
+    top = S + Vector((-sgn * 0.035, 0, 0.012))
     C = Wr + fwd * 0.02
     pts = [tuple(top), tuple(S + (E - S) * 0.5), tuple(E), tuple(E + (Wr - E) * 0.5), tuple(C)]
     nv, nu = 40, 40
@@ -759,7 +760,7 @@ def make_sleeve(side, sgn):
     Nn = np.cross(T[0], [0, -1.0, 0]); Nn /= np.linalg.norm(Nn)
     seglen = np.linalg.norm(np.diff(path, axis=0), axis=1)
     s = np.concatenate([[0], np.cumsum(seglen)]); fr = s / s[-1]
-    rk = np.array([(0, 0.072), (0.30, 0.070), (0.55, 0.085), (0.80, 0.122), (1.0, 0.160)])
+    rk = np.array([(0, 0.050), (0.18, 0.062), (0.40, 0.072), (0.62, 0.090), (0.85, 0.128), (1.0, 0.160)])
     r = np.interp(fr, rk[:, 0], rk[:, 1])
     a = np.linspace(0, 2 * np.pi, nu, endpoint=False)
     P = np.zeros((nv, nu, 3))
@@ -947,16 +948,12 @@ def make_foot(side, sgn):
     c = heel + fwd * (L * 0.45) + Vector((0, 0, 0.030))
     bm_ellipsoid(bm, c, (L * 0.47, 0.043, 0.032), 24, 12, M=Rm)
     bm_ellipsoid(bm, heel + fwd * 0.045 + Vector((0, 0, 0.05)), (0.040, 0.036, 0.055), 16, 8, M=Rm)  # tobillo
-    # dedos
-    base = Vector((toe.x, toe.y, sole)) + fwd * 0.035
-    for k, off in enumerate((-0.026, -0.011, 0.002, 0.014, 0.025)):
-        rr = (0.013, 0.0095, 0.009, 0.0085, 0.008)[k]
-        pos = base + fwd * (0.012 - abs(off) * 0.55) + Rm.col[1] * (off * -sgn) + Vector((0, 0, rr * 0.9))
-        bm_ellipsoid(bm, pos, (rr * 1.5, rr, rr * 0.9), 12, 6, M=Rm)
+    # punta de bota algo afinada
+    bm_ellipsoid(bm, tip - fwd * 0.045 + Vector((0, 0, 0.024)), (0.060, 0.036, 0.024), 20, 10, M=Rm)
     # canilla (por si la túnica se levanta)
     bm_capsule(bm, J[side + 'Leg'] + (ank - J[side + 'Leg']) * 0.25, ank + Vector((0, 0, 0.02)), 0.042, 0.033, seg=16)
     ob = bm_to_obj(bm, 'pie_' + side)
-    ob.data.materials.append(M['skin'])
+    ob.data.materials.append(M['boot'])
     voxelize(ob, 0.003)
     P = np.array([v.co for v in ob.data.vertices])
     t = smoothstep(-0.01, 0.025, (P - np.array(toe)) @ np.array(fwd))
@@ -1025,8 +1022,9 @@ def make_medallion():
 
 def make_cape():
     NU, NV = 96, 22
-    keys = [(ZN + 0.025, 0.080, 0.078, YC + 0.01, 0.34), (ZSH + 0.045, 0.165, 0.135, YC + 0.005, 0.40),
-            (ZSH - 0.02, 0.255, 0.190, YC, 0.46), (ZSH - 0.09, 0.300, 0.225, YC, 0.50)]
+    keys = [(ZN + 0.025, 0.080, 0.078, YC + 0.01, 0.34), (ZN - 0.020, 0.125, 0.108, YC + 0.008, 0.37),
+            (ZSH + 0.030, 0.200, 0.158, YC + 0.004, 0.42), (ZSH - 0.035, 0.258, 0.198, YC, 0.47),
+            (ZSH - 0.105, 0.275, 0.215, YC, 0.50)]
     P = ring_rows(keys, NV, NU, open_angle=True)
     a = np.arctan2(P[..., 0], -(P[..., 1] - YC))  # 0 adelante, ±pi atrás
     back = np.clip(-np.cos(a), 0, 1) ** 2
