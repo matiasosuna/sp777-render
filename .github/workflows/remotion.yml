@@ -102,9 +102,16 @@ jobs:
         working-directory: videos
         timeout-minutes: 10
         run: ./node_modules/.bin/remotion browser ensure < /dev/null
+      # ffmpeg: el del sistema; si no está, apt con tope de 4 min; si apt se cuelga (pasó el 18/11), el que trae Remotion
       - name: ffmpeg
-        timeout-minutes: 10
-        run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null)
+        timeout-minutes: 8
+        run: |
+          command -v ffmpeg && exit 0
+          if timeout 240 sh -c 'sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null'; then exit 0; fi
+          mkdir -p "$HOME/bin"
+          for B in ffmpeg ffprobe; do printf '#!/bin/sh\nexec "%s/videos/node_modules/.bin/remotion" %s "$@"\n' "$GITHUB_WORKSPACE" "$B" > "$HOME/bin/$B"; chmod +x "$HOME/bin/$B"; done
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/bin/ffmpeg" -version | head -1
       - name: voices
         if: inputs.voces != ''
         timeout-minutes: 10
