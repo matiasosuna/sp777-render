@@ -21,6 +21,9 @@ on:
       fotos:
         description: 'cuadros para las fotos, separados por espacios (vacío = 6 parejos)'
         default: ''
+      depurar:
+        description: 'segundos para cuadros con huesos dibujados (args "debug t=S"), separados por espacios'
+        default: ''
 permissions:
   contents: read
 env:
@@ -89,6 +92,7 @@ jobs:
         env:
           CARPETA: ${{ inputs.carpeta }}
           N: ${{ inputs.cuadros }}
+          DEPURAR: ${{ inputs.depurar }}
           LIBGL_ALWAYS_SOFTWARE: '1'
           GALLIUM_DRIVER: llvmpipe
         run: |
@@ -101,6 +105,7 @@ jobs:
           t=$(date +%s)
           G --write-movie "$PWD/out/debug/d.png" --quit-after 2 -- debug > out/debug.log 2>&1 || true
           tail -20 out/debug.log
+          for d in $DEPURAR; do G --write-movie "$PWD/out/debug/t_$d.png" --quit-after 1 -- debug "t=$d" > /dev/null 2>&1 || true; done
           # el personaje solo (sin cámara ni efectos) en t=0 y en t=4 s: para medir el movimiento
           mkdir -p out/mov
           G --write-movie "$PWD/out/mov/a.png" --quit-after 1 -- sincam t=0 > /dev/null 2>&1 || true

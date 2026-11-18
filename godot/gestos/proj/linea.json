@@ -1,0 +1,24 @@
+{
+ "rig": {},
+ "velas": [[126, 1000, 330], [950, 1003, 330]],
+ "sol": [541, 764, 1100],
+ "escenas": [
+  {"nombre": "escritorio", "de": 0.0, "a": 6.0, "fondo": "escritorio", "frente": "escritorio", "base": "escritorio",
+   "esc": 1.25, "ancla": [549, 965], "en": [540, 1330], "zoom": [1.0, 1.05], "tinte": [1.0, 0.86, 0.72], "efectos": ["velas"]},
+  {"nombre": "respira", "de": 6.0, "a": 10.5, "fondo": "noche", "base": "de_pie",
+   "esc": 1.35, "ancla": [549, 700], "en": [540, 880], "zoom": [1.0, 1.04], "efectos": ["anillo", "particulas"]},
+  {"nombre": "cuadrado", "de": 10.5, "a": 17.0, "fondo": "noche", "base": "de_pie",
+   "esc": 1.15, "ancla": [549, 745], "en": [540, 860], "zoom": [1.0, 1.03], "efectos": ["anillo", "cuadrado", "particulas"]},
+  {"nombre": "bote", "de": 17.0, "a": 21.0, "fondo": "mar", "frente": "mar", "base": "de_pie",
+   "esc": 0.58, "ancla": [549, 1790], "en": [549, 1620], "zoom": [1.0, 1.05], "tinte": [1.0, 0.9, 0.92], "efectos": ["bote", "sol"]},
+  {"nombre": "medita", "de": 21.0, "a": 25.5, "fondo": "noche", "base": "sentado", "cuerpo": "sentado",
+   "esc": 0.95, "ancla": [549, 900], "en": [540, 1000], "zoom": [1.0, 1.04], "efectos": ["anillo", "particulas"]}
+ ],
+ "acciones": [
+  ["write", 0.3, 4.6], ["look_up", 4.6, 6.0],
+  ["breathe_in", 6.4, 8.4], ["breathe_out", 8.4, 10.4],
+  ["square", 10.9, 16.9],
+  ["raise_arms", 17.3, 20.8],
+  ["meditate", 21.2, 23.6], ["invite", 23.6, 25.5]
+ ]
+}

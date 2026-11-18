@@ -317,10 +317,12 @@ for p in sorted(glob.glob(os.path.join(D, 'piezas', '*.png'))):
         fn = np.asarray(f)
         grilla(fn, nom)
         # primer plano opcional: polígono que va delante del personaje (escritorio, bote)
-        if cfg.get('frente'):
-            m = poli(cfg['frente'], (H, W), 1.0)
-            guardar_rgba(fn.astype(np.float32), m, f'{CAPAS}/{nom}_frente.png')
-            Image.fromarray((fn * m[..., None] + mag * (1 - m[..., None])).astype(np.uint8)).save(f'{CTL}/frente_{nom}.jpg', quality=88)
+        # "frente": entre el cuerpo y los brazos (tapa de escritorio); "alto": delante de todo (frente del mueble, velas, casco del bote)
+        for clave in ['frente', 'alto']:
+            if cfg.get(clave):
+                m = poli(cfg[clave], (H, W), 1.0)
+                guardar_rgba(fn.astype(np.float32), m, f'{CAPAS}/{nom}_{clave}.png')
+                Image.fromarray((fn * m[..., None] + mag * (1 - m[..., None])).astype(np.uint8)).save(f'{CTL}/{clave}_{nom}.jpg', quality=88)
         piezas[nom] = dict(tipo='fondo', w=W, h=H)
     else:
         esc = float(cfg.get('escala', 1.4))
