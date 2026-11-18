@@ -1,0 +1,231 @@
+name: lam
+run-name: lam ${{ inputs.modo }} ${{ inputs.ref }}
+# Repertorio en láminas HyperFrames (18/11/2026). Una corrida = una tanda de técnicas; un job por técnica, en paralelo.
+# Cada job: voz (si falta o voz_nueva; Chatterbox en CPU con el arreglo de e504242, timeline revisado) → Telegram (voces.json)
+#   → lámina videos/hf/<id>-lam (o <id>-lamina) → render → mp4 a Telegram, reemplazando si ya estaba (telegram.json).
+# Todo se instala una sola vez por job y en paralelo. Los mapas (voces/telegram.json) se leen de la rama `mapas`, no del ref,
+# así un video ya subido se reemplaza en su mensaje y no se duplica. El job no escribe en el repo: deja res.json en el
+# artefacto lam-<id> y juntar.sh (local) lo pasa a voces.json y telegram.json. Los registros no muestran el guion.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'commit (SHA) de spiritual-practices con las láminas y guiones'
+        required: true
+      ids:
+        description: 'ids de técnicas, separados por espacio o coma (máx. 256)'
+        required: true
+      modo:
+        description: 'video = voz + render + Telegram; hoja = voz + hoja de frases sin render (~3 min); voz = solo la voz'
+        type: choice
+        options: [video, hoja, voz]
+        default: video
+      voz_nueva:
+        description: 'rehacer la voz aunque esté guardada'
+        type: boolean
+        default: false
+      subir:
+        description: 'video: subir el mp4 a Telegram (reemplaza el mensaje si ya había)'
+        type: boolean
+        default: true
+      calidad:
+        type: choice
+        options: [looks, draft, delivery]
+        default: looks
+      paralelo:
+        description: 'jobs a la vez (la cuenta corre 20 entre todos los repos)'
+        default: '15'
+      mapas:
+        description: 'rama de spiritual-practices de donde leer voces.json y telegram.json al momento del job'
+        default: puente/spiritual-practices-777
+permissions: {}
+jobs:
+  lista:
+    runs-on: ubuntu-latest
+    outputs:
+      ids: ${{ steps.l.outputs.ids }}
+    steps:
+      - id: l
+        env:
+          IDS: ${{ inputs.ids }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os, re
+          l = list(dict.fromkeys(x for x in re.split(r'[\s,]+', os.environ['IDS']) if x))
+          assert 0 < len(l) <= 256 and all(re.fullmatch(r'[A-Za-z0-9_-]+', x) for x in l), 'ids inválidos'
+          print('ids=' + json.dumps(l))
+          EOF
+  lam:
+    needs: lista
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.paralelo) }}
+      matrix:
+        id: ${{ fromJSON(needs.lista.outputs.ids) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      ID: ${{ matrix.id }}
+      MODO: ${{ inputs.modo }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
+      DO_NOT_TRACK: '1'
+      HYPERFRAMES_TELEMETRY: '0'
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: |
+            videos/hf
+            practicas
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.mapas }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          path: mapas
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            practicas/voces.json
+            practicas/telegram.json
+      - uses: actions/checkout@v4
+        with:
+          path: motor
+          sparse-checkout: hf
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: lámina y voz guardada
+        id: v
+        env:
+          NUEVA: ${{ inputs.voz_nueva && '1' || '' }}
+        run: |
+          cp mapas/practicas/voces.json mapas/practicas/telegram.json practicas/
+          test -f "practicas/$ID.md" || { echo "falta practicas/$ID.md"; exit 1; }
+          C=""; for c in "$ID-lam" "$ID-lamina"; do [ -f "videos/hf/$c/index.html" ] && { C=$c; break; }; done
+          [ -n "$C" ] || [ "$MODO" = voz ] || { echo "falta videos/hf/$ID-lam/index.html"; exit 1; }
+          echo "CARPETA=$C" >> "$GITHUB_ENV"
+          FID=$(python -c "import json,os;print(json.load(open('practicas/voces.json')).get(os.environ['ID'],{}).get('file_id',''))")
+          [ -n "$NUEVA" ] && FID=""
+          echo "fid=$FID" >> "$GITHUB_OUTPUT"; echo "lámina ${C:-—}, voz ${FID:+guardada}${FID:-nueva}"
+      - uses: actions/cache@v4
+        if: steps.v.outputs.fid == ''
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/huggingface
+            ~/.cache/torch
+            ~/.npm
+          key: motor-v1
+      - uses: actions/cache@v4
+        if: inputs.modo != 'voz'
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/hyperframes
+            ~/.cache/puppeteer
+          key: hf20-v1
+      - name: herramientas (una vez, en paralelo)
+        env:
+          FID: ${{ steps.v.outputs.fid }}
+        run: |
+          T0=$(date +%s); mkdir -p logs; P=()
+          if [ -z "$FID" ]; then
+            ( pip install -q modal && pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu && pip install -q chatterbox-tts ) > logs/pip.log 2>&1 & P+=($!:pip)
+          fi
+          if [ "$MODO" = video ]; then npx -y hyperframes@0.9.12 browser ensure > logs/hf.log 2>&1 & P+=($!:hf); fi
+          if [ "$MODO" = hoja ]; then ( mkdir -p ~/pp && cd ~/pp && npm init -y && npm i --no-audit --no-fund puppeteer@23.11.1 ) > logs/pp.log 2>&1 & P+=($!:pp); fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji > /dev/null
+          ok=1; for x in "${P[@]}"; do wait "${x%%:*}" || { echo "falló ${x#*:}"; tail -5 "logs/${x#*:}.log"; ok=0; }; done
+          echo "herramientas $(( $(date +%s) - T0 )) s"; [ $ok = 1 ]
+      - name: voz
+        id: voz
+        env:
+          REF_ID: ${{ secrets.REF_ID }}
+          FID: ${{ steps.v.outputs.fid }}
+        run: |
+          D=videos/out/voz/reel-$ID; mkdir -p "$D"; T0=$(date +%s)
+          if [ -n "$FID" ]; then
+            python practicas/telegram.py bajar "$FID" voz.tgz && tar xzf voz.tgz -C "$D"
+            if [ -f "$D/voz.flac" ]; then ffmpeg -v error -y -i "$D/voz.flac" "$D/voz.wav"; fi
+            echo '{}' > voz.json
+          else
+            python practicas/telegram.py bajar "$REF_ID" ref.wav
+            python videos/gh_practica.py voz "$ID" ref.wav
+            ffmpeg -v error -y -i "$D/voz.wav" -c:a flac -sample_fmt s16 "$D/voz.flac"
+            tar czf voz.tgz -C "$D" voz.flac timeline.json
+            python practicas/telegram.py subir-voz voz.tgz "$ID" > /dev/null
+            python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/voces.json'));json.dump({i:m[i]},open('voz.json','w'))"
+            echo "voz nueva en $(( $(date +%s) - T0 )) s"
+          fi
+          python motor/hf/chequear_voz.py "$D/timeline.json" chequeo.json || echo "larga=1" >> "$GITHUB_OUTPUT"
+          mkdir -p voz && cp "$D/voz.wav" "$D/timeline.json" voz/
+      - name: build
+        if: inputs.modo != 'voz'
+        run: |
+          if [ "$MODO" = video ]; then npx -y hyperframes@0.9.12 init hf0 --skip-skills > logs/init.log 2>&1 || true; fi
+          python videos/hf/armar.py "$ID" voz build --entero --plantilla "$CARPETA"
+          if [ -d hf0 ]; then cp -rn hf0/. build/ 2>/dev/null || true; rm -f build/compositions/*.html.example; fi
+      - name: hoja
+        if: inputs.modo == 'hoja'
+        run: |
+          mkdir -p salida cuadros
+          cp motor/hf/hoja.js . && CARPETA="$ID" node hoja.js
+          i=0; for f in $(ls cuadros | sort); do g=$((i / 18 + 1)); mkdir -p "g$g"; cp "cuadros/$f" "g$g/$(printf %02d $((i % 18))).png"; i=$((i + 1)); done
+          for d in g*; do ffmpeg -v error -y -framerate 1 -i "$d/%02d.png" -vf "tile=6x3:padding=4:color=white" -frames:v 1 "salida/$ID-frases${d#g}.jpg" || true; done
+      - name: render
+        if: inputs.modo == 'video'
+        working-directory: build
+        run: |
+          npx -y hyperframes@0.9.12 lint > ../logs/lint.txt 2>&1 || true
+          T0=$(date +%s)
+          npx -y hyperframes@0.9.12 render --quality ${{ inputs.calidad }} -o ../out.mp4 > ../logs/render.log 2>&1 || { tail -c 1500 ../logs/render.log | grep -v -i -E 'said|text' ; exit 1; }
+          echo "render $(( $(date +%s) - T0 )) s" | tee ../tiempo.txt
+      - name: 540p y hoja
+        if: inputs.modo == 'video'
+        run: |
+          mkdir -p salida fotos
+          ffmpeg -v error -y -i out.mp4 -vf scale=540:960 -c:v libx264 -preset slow -crf 24 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart "salida/$ID-540p.mp4"
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
+          for k in $(seq 1 16); do
+            T=$(python -c "print($DUR*($k-0.5)/16)")
+            ffmpeg -v error -y -ss "$T" -i out.mp4 -frames:v 1 -vf scale=270:480 "fotos/$(printf %02d $k).png"
+          done
+          ffmpeg -v error -y -framerate 1 -i fotos/%02d.png -vf "tile=8x2:padding=4:color=white" -frames:v 1 "salida/$ID-hoja.jpg"
+          echo "dur $DUR s, $(cat tiempo.txt)" > salida/info.txt; cat salida/info.txt
+      - name: telegram
+        if: inputs.modo == 'video' && inputs.subir
+        env:
+          LARGA: ${{ steps.voz.outputs.larga }}
+        run: |
+          if [ -n "$LARGA" ]; then echo "voz con palabras largas: no se sube el video (ver chequeo.json)"; exit 0; fi
+          mkdir -p sube && cp out.mp4 "sube/$ID.mp4"
+          FORZAR=1 python practicas/telegram.py subir sube "$ID"
+          python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/telegram.json'));json.dump({i:m[i]},open('tg.json','w'))"
+      - name: resultado
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os
+          l = lambda f: json.load(open(f)) if os.path.exists(f) else {}
+          info = open('salida/info.txt').read().strip() if os.path.exists('salida/info.txt') else ''
+          json.dump({'id': os.environ['ID'], 'carpeta': os.environ.get('CARPETA', ''), 'modo': os.environ['MODO'],
+                     'video': l('tg.json'), 'voz': l('voz.json'), 'chequeo': l('chequeo.json'), 'info': info}, open('res.json', 'w'))
+          EOF
+          cat res.json | python -c "import json,sys;r=json.load(sys.stdin);print('video', bool(r['video']), '| voz nueva', bool(r['voz']), '| largas', len(r['chequeo'].get('largas', [])), '|', r['info'])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lam-${{ matrix.id }}
+          path: |
+            res.json
+            salida/
+          retention-days: 7
