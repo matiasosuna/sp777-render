@@ -1,0 +1,99 @@
+name: remotion
+# Render de Remotion (18/11/2026): muñeco v6 (videos/src/munecos2) de spiritual-practices en un commit exacto.
+# Un número en `frames` saca un cuadro suelto (remotion still); un rango "a-b" o vacío renderiza el mp4.
+# Sube el mp4/png, una hoja de contactos de 12 cuadros y el tiempo de render. No manda nada a Telegram.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'commit (SHA completo) de spiritual-practices'
+        required: true
+      comp:
+        description: 'id de la composición'
+        required: true
+      frames:
+        description: 'vacío = todo · "0" = cuadro suelto · "0-119" = rango'
+        default: ''
+      entry:
+        description: 'entrada de Remotion dentro de videos/'
+        default: 'src/munecos2/index.ts'
+      stills:
+        description: 'cuadros sueltos en tamaño completo (lista con comas), sacados del mp4'
+        default: ''
+permissions: {}
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMP: ${{ inputs.comp }}
+      FRAMES: ${{ inputs.frames }}
+      ENTRY: ${{ inputs.entry }}
+      STILLS: ${{ inputs.stills }}
+      REMOTION_DISABLE_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: |
+            videos/src
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: videos/node_modules
+          key: remotion-nm-${{ hashFiles('videos/package.json', 'videos/package-lock.json') }}
+      - name: check inputs
+        run: |
+          case "$ENTRY" in *..*|/*) echo "entrada inválida"; exit 1;; esac
+          echo "$COMP" | grep -Eq '^[A-Za-z0-9_-]+$' || { echo "comp inválida"; exit 1; }
+          echo "$FRAMES" | grep -Eq '^([0-9]+(-[0-9]+)?)?$' || { echo "frames inválido"; exit 1; }
+          echo "$STILLS" | grep -Eq '^([0-9]+(,[0-9]+)*)?$' || { echo "stills inválido"; exit 1; }
+          test -f "videos/$ENTRY"
+      - name: tools
+        working-directory: videos
+        run: |
+          (command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null)) &
+          [ -d node_modules/remotion ] || npm ci --no-audit --no-fund --silent || npm install --no-audit --no-fund --silent
+          npx remotion browser ensure > ../browser.log 2>&1 || { tail -20 ../browser.log; exit 1; }
+          wait
+      - name: render
+        working-directory: videos
+        run: |
+          mkdir -p ../salida; S=$(date +%s)
+          if echo "$FRAMES" | grep -Eq '^[0-9]+$'; then
+            npx remotion still "$ENTRY" "$COMP" "../salida/$COMP-$FRAMES.png" --frame="$FRAMES" > ../render.log 2>&1 || { tail -c 4000 ../render.log; exit 1; }
+          else
+            R=""; [ -n "$FRAMES" ] && R="--frames=$FRAMES"
+            npx remotion render "$ENTRY" "$COMP" ../salida/out.mp4 --concurrency=100% --codec=h264 $R > ../render.log 2>&1 || { tail -c 4000 ../render.log; exit 1; }
+          fi
+          echo "render: $(( $(date +%s) - S )) s" | tee ../salida/tiempo.txt
+          tail -5 ../render.log
+      - name: contact sheet
+        if: hashFiles('salida/out.mp4') != ''
+        run: |
+          V=salida/out.mp4; mkdir -p cuadros
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V")
+          for k in $(seq 1 12); do
+            T=$(python3 -c "print($DUR*($k-0.5)/12)")
+            ffmpeg -v error -y -ss "$T" -i "$V" -frames:v 1 -vf "scale=270:-1,drawtext=text='$k':x=8:y=8:fontsize=22:fontcolor=white:box=1:boxcolor=black@0.5" "cuadros/$(printf %02d $k).png" \
+              || ffmpeg -v error -y -ss "$T" -i "$V" -frames:v 1 -vf scale=270:-1 "cuadros/$(printf %02d $k).png"
+          done
+          ffmpeg -v error -y -framerate 1 -i cuadros/%02d.png -vf tile=4x3 -frames:v 1 salida/hoja-contactos.jpg
+          for n in $(echo "$STILLS" | tr ',' ' '); do
+            ffmpeg -v error -y -ss "$(python3 -c "print($n/30)")" -i "$V" -frames:v 1 "salida/cuadro-$n.png"
+          done
+          ffmpeg -v error -y -i "$V" -vf scale=540:-2 -c:v libx264 -crf 26 -preset veryfast -an salida/celu.mp4 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: remotion-${{ inputs.comp }}
+          path: |
+            salida/
+            render.log
+            browser.log
+          retention-days: 7
