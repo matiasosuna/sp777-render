@@ -91,6 +91,10 @@ jobs:
           t=$(date +%s)
           G --write-movie "$PWD/out/debug/d.png" --quit-after 2 -- debug > out/debug.log 2>&1 || true
           tail -20 out/debug.log
+          # el personaje solo (sin cámara ni efectos) en t=0 y en t=4 s: para medir el movimiento
+          mkdir -p out/mov
+          G --write-movie "$PWD/out/mov/a.png" --quit-after 1 -- sincam t=0 > /dev/null 2>&1 || true
+          G --write-movie "$PWD/out/mov/b.png" --quit-after 1 -- sincam t=4 > /dev/null 2>&1 || true
           G --write-movie "$PWD/out/frames/f.png" --quit-after "$N" > out/godot.log 2>&1 || true
           grep -iE 'error|warn|malla|OpenGL|llvmpipe|movie' out/godot.log | head -40
           echo "godot: $(( $(date +%s) - t )) s; cuadros: $(ls out/frames/*.png | wc -l)"
@@ -114,7 +118,10 @@ jobs:
             -filter_complex "[0]scale=360:-1[a];[1]scale=360:-1[b];[2]scale=360:-1[c];[3]scale=360:-1[d];[a][b][c][d]hstack=4" out/stills/contacto.png
           # diferencia entre el cuadro 0 y el del medio (dónde hay movimiento)
           ffmpeg -y -loglevel error -i "${F[0]}" -i "${F[$h]}" -filter_complex "[0]format=gbrp[a];[1]format=gbrp[b];[a][b]blend=all_mode=difference,lutrgb=r=val*5:g=val*5:b=val*5,scale=540:-1" out/stills/diferencia.png
-          rm -rf out/frames
+          A=$(ls out/mov/a*.png | head -1); B=$(ls out/mov/b*.png | head -1)
+          ffmpeg -y -loglevel error -i "$A" -i "$B" -filter_complex "[0]format=gbrp[a];[1]format=gbrp[b];[a][b]blend=all_mode=difference,lutrgb=r=val*5:g=val*5:b=val*5,scale=540:-1" out/stills/movimiento.png || true
+          ffmpeg -y -loglevel error -i "$A" -i "$B" -filter_complex "[0]crop=1080:700:0:300,scale=540:-1[a];[1]crop=1080:700:0:300,scale=540:-1[b];[a][b]hstack" out/stills/t0_vs_t4.png || true
+          rm -rf out/frames out/mov
           ls -la out out/stills out/debug
       - uses: actions/upload-artifact@v4
         if: always()

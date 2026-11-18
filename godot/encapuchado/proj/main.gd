@@ -13,6 +13,7 @@ const CELL := 16
 
 var frame := 0
 var debug := false
+var sincam := false   # "sincam": sin cámara ni efectos (para medir cuánto se mueve el personaje)
 var L: Dictionary
 var world: Node2D
 var cam: Camera2D
@@ -50,7 +51,12 @@ class FX extends Node2D:
 
 
 func _ready() -> void:
-	debug = "debug" in OS.get_cmdline_user_args()
+	var ua := OS.get_cmdline_user_args()
+	debug = "debug" in ua
+	sincam = "sincam" in ua
+	for a in ua:
+		if a.begins_with("t="):
+			frame = int(round(float(a.substr(2)) * FPS))
 	var dir := ProjectSettings.globalize_path("res://capas/")
 	L = JSON.parse_string(FileAccess.get_file_as_string(dir + "layout.json"))
 	add_mat = CanvasItemMaterial.new()
@@ -72,7 +78,7 @@ func _ready() -> void:
 	# estrellas que titilan (detrás de todo)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 777
-	var dot := radial_tex(64, 2.2)
+	var dot := radial_tex(64, 1.5)
 	var stars := FX.new()
 	stars.dot = dot
 	stars.material = add_mat
@@ -144,8 +150,11 @@ func _ready() -> void:
 	add_particles(front_fx, rng, 22, 1.0)
 	world.add_child(front_fx)
 	front_fx.set_meta("back", part_back)
+	if sincam:
+		for n in [ring, ring_glow, stars, part_back, front_fx]:
+			n.visible = false
 
-	pose(0.0)
+	pose(frame / FPS)
 
 
 func tex(path: String) -> ImageTexture:
@@ -170,7 +179,7 @@ func add_particles(fx: FX, rng: RandomNumberGenerator, n: int, sc: float) -> voi
 		fx.items.append({kind = 0, x0 = rng.randf_range(110.0, 990.0), y0 = rng.randf_range(1450.0, 1900.0),
 			dist = rng.randf_range(450.0, 1000.0) * per / 8.0 + 200.0, period = per, ph = rng.randf(),
 			sway = rng.randf_range(6.0, 22.0), k = float(rng.randi_range(1, 2)), psi = rng.randf() * TAU,
-			a0 = rng.randf_range(0.5, 0.95), size = rng.randf_range(9.0, 24.0) * sc,
+			a0 = rng.randf_range(0.6, 1.0), size = rng.randf_range(10.0, 30.0) * sc,
 			col = Color(1.0, 0.82, 0.45) if gold else Color(0.5, 0.92, 1.0)})
 
 
@@ -399,6 +408,8 @@ func pose(t: float) -> void:
 
 	# cámara: acercamiento suave y vuelta (periódico)
 	var z := 0.5 - 0.5 * cos(w * t)
+	if sincam:
+		z = 0.0
 	cam.zoom = Vector2.ONE * (1.0 + 0.035 * z)
 	cam.position = Vector2(W * 0.5, H * 0.5 - 25.0 * z)
 
