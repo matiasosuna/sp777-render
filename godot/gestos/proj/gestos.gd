@@ -24,20 +24,20 @@ var DEF := {
 var POSES := {
 	# bases de escena
 	"de_pie": {},
-	"escritorio": {"muL": Vector2(430, 965), "muR": Vector2(668, 970), "manoL": 18.0, "manoR": -22.0, "cabeza_y": 6.0, "viento": 0.0},
+	"escritorio": {"muL": Vector2(430, 945), "muR": Vector2(668, 950), "manoL": 18.0, "manoR": -22.0, "cabeza_y": 6.0, "viento": 0.0},
 	"sentado": {"muL": Vector2(285, 985), "muR": Vector2(813, 985), "manoL": 30.0, "manoR": -30.0, "viento": 0.3},
 	# poses de gesto
-	"escribir_a": {"muL": Vector2(425, 962), "manoL": 22.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 2.0},
-	"escribir_b": {"muL": Vector2(445, 972), "manoL": 14.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 1.0},
-	"escribir_c": {"muL": Vector2(462, 962), "manoL": 20.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 0.0},
-	"mira_arriba": {"muL": Vector2(430, 960), "manoL": 18.0, "pluma": 1.0, "cabeza_y": -3.0, "cabeza": -3.0},
+	"escribir_a": {"muL": Vector2(425, 940), "manoL": 22.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 2.0},
+	"escribir_b": {"muL": Vector2(447, 952), "manoL": 14.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 1.0},
+	"escribir_c": {"muL": Vector2(466, 940), "manoL": 20.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 0.0},
+	"mira_arriba": {"muL": Vector2(432, 940), "manoL": 18.0, "pluma": 1.0, "cabeza_y": -3.0, "cabeza": -3.0},
 	"inhalar": {"pecho": 16.0, "hombros": 20.0, "pecho_esc": 0.035, "cabeza_y": -5.0, "luz_pecho": 1.0},
 	"exhalar": {"pecho": -3.0, "hombros": -4.0, "pecho_esc": -0.005, "cabeza_y": 2.0, "luz_pecho": 0.1},
 	"brazos_arriba": {"muL": Vector2(250, 290), "muR": Vector2(848, 290), "manoL": -25.0, "manoR": 25.0,
 		"hombros": 14.0, "pecho": 8.0, "pecho_esc": 0.02, "cabeza_y": -6.0},
 	"brazos_medio": {"muL": Vector2(150, 600), "muR": Vector2(948, 600), "manoL": -15.0, "manoR": 15.0, "hombros": 8.0, "pecho": 5.0},
 	"medita_in": {"pecho": 7.0, "hombros": 8.0, "pecho_esc": 0.015, "luz_pecho": 0.8},
-	"invitar": {"muL": Vector2(175, 880), "muR": Vector2(923, 880), "manoL": 20.0, "manoR": -20.0, "cabeza": 3.0, "cabeza_y": -2.0,
+	"invitar": {"muL": Vector2(245, 925), "muR": Vector2(853, 925), "manoL": 40.0, "manoR": -40.0, "cabeza": 3.0, "cabeza_y": -2.0,
 		"luz_pecho": 0.6, "hombros": 4.0},
 }
 
@@ -53,8 +53,8 @@ var ACCIONES := {
 }
 
 # cuadrado de luz delante del pecho: cada fase (inhala, retiene, exhala, retiene) dibuja un lado
-const CENTRO := Vector2(549, 730)
-const MEDIO := 165.0
+const CENTRO := Vector2(549, 760)
+const MEDIO := 200.0
 
 
 func esquinas() -> Array:

@@ -339,4 +339,4 @@ func ik(s: String, target: Vector2, hand_deg: float, aim_w: float, aim: Vector2)
 	ha.rotation = wrapf(hand_g - fo_g, -PI, PI)
 	# la campana cuelga: compensa parte del giro del antebrazo
 	var sw := 1.2 * PI / 180.0 * sin(TAU * t / 3.0 + (0.0 if s == "L" else 1.3))
-	ca.rotation = -0.8 * wrapf(fo_g, -PI, PI) + sw
+	ca.rotation = wrapf(0.2 * sin(fo_g) - fo_g, -PI, PI) + sw

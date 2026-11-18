@@ -6,7 +6,7 @@
     220
    ],
    "esc": 1.0,
-   "rot": -116,
+   "rot": -46,
    "lado": "L"
   },
   "sentado": {
@@ -150,14 +150,14 @@
    "fondo": "noche",
    "base": "sentado",
    "cuerpo": "sentado",
-   "esc": 1.15,
+   "esc": 1.0,
    "ancla": [
     549,
     780
    ],
    "en": [
     540,
-    900
+    960
    ],
    "zoom": [
     1.0,
