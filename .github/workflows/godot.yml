@@ -1,0 +1,124 @@
+name: godot
+# Video 2D con Godot 4 (17/11/2026): prep.py recorta el personaje (BiRefNet), rehace el fondo con LaMa y arma el
+# círculo de runas; después Godot (renderer Compatibility, OpenGL por software con Mesa llvmpipe bajo xvfb) graba
+# con Movie Maker cuadro por cuadro y ffmpeg arma out.mp4 (H.264, yuv420p). Todo en CPU; nada corre en la Mac.
+on:
+  workflow_dispatch:
+    inputs:
+      carpeta:
+        description: 'carpeta con fuente.png, prep.py y proj/ (proyecto de Godot)'
+        default: 'godot/encapuchado'
+      cuadros:
+        description: 'cuadros a 30 fps (240 = 8 s)'
+        default: '240'
+      args:
+        description: 'argumentos para prep.py (k=8 dilatar=18 corte=birefnet-general)'
+        default: ''
+permissions:
+  contents: read
+env:
+  GV: 4.7.2-stable
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: carpeta
+        env:
+          CARPETA: ${{ inputs.carpeta }}
+        run: case "$CARPETA" in *..*|/*) echo "carpeta inválida"; exit 1;; esac
+      # capas ya hechas para este prep.py + fuente.png + args (se saltea Python)
+      - uses: actions/cache@v4
+        id: capas
+        with:
+          path: |
+            ${{ inputs.carpeta }}/proj/capas
+            out/prep
+          key: godot-capas-${{ hashFiles(format('{0}/prep.py', inputs.carpeta), format('{0}/fuente.png', inputs.carpeta)) }}-${{ inputs.args }}
+      - if: steps.capas.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - if: steps.capas.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.u2net
+            /tmp/esr.pth
+            /tmp/big-lama.pt
+          key: godot-modelos-v1
+      - name: capas
+        if: steps.capas.outputs.cache-hit != 'true'
+        env:
+          CARPETA: ${{ inputs.carpeta }}
+          ARGS: ${{ inputs.args }}
+        run: |
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q "rembg[cpu]" spandrel opencv-python-headless pillow numpy
+          python "$CARPETA/prep.py" "$CARPETA" $ARGS
+          ls -la "$CARPETA/proj/capas" out/prep
+      - uses: actions/cache@v4
+        id: gd
+        with:
+          path: ~/godot
+          key: godot-bin-${{ env.GV }}
+      - name: instalar
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libgl1-mesa-dri libglx-mesa0 libegl-mesa0 libgl1 libegl1 libgles2 \
+            libxcursor1 libxinerama1 libxrandr2 libxi6 libxkbcommon0 libfontconfig1 ffmpeg >/dev/null
+          if [ ! -x ~/godot/godot ]; then
+            mkdir -p ~/godot
+            curl -fL --retry 5 -sS -o /tmp/g.zip "https://github.com/godotengine/godot/releases/download/$GV/Godot_v${GV}_linux.x86_64.zip"
+            unzip -q /tmp/g.zip -d ~/godot && mv ~/godot/Godot_v* ~/godot/godot
+          fi
+          ~/godot/godot --version
+      - name: render
+        env:
+          CARPETA: ${{ inputs.carpeta }}
+          N: ${{ inputs.cuadros }}
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          P="$CARPETA/proj"
+          mkdir -p out/frames out/debug out/stills
+          timeout 300 ~/godot/godot --headless --path "$P" --import > out/import.log 2>&1 || true
+          tail -5 out/import.log
+          G() { xvfb-run -a -s "-screen 0 1280x2048x24" ~/godot/godot --path "$P" --display-driver x11 \
+                  --rendering-driver opengl3 --rendering-method gl_compatibility --resolution 1080x1920 --fixed-fps 30 "$@"; }
+          t=$(date +%s)
+          G --write-movie "$PWD/out/debug/d.png" --quit-after 2 -- debug > out/debug.log 2>&1 || true
+          tail -20 out/debug.log
+          G --write-movie "$PWD/out/frames/f.png" --quit-after "$N" > out/godot.log 2>&1 || true
+          grep -iE 'error|warn|malla|OpenGL|llvmpipe|movie' out/godot.log | head -40
+          echo "godot: $(( $(date +%s) - t )) s; cuadros: $(ls out/frames/*.png | wc -l)"
+          ls out/frames/*.png > /dev/null
+      - name: video
+        run: |
+          set -e
+          ffmpeg -y -loglevel error -framerate 30 -pattern_type glob -i 'out/frames/*.png' \
+            -c:v libx264 -preset slow -crf 17 -pix_fmt yuv420p -movflags +faststart out/out.mp4
+          mapfile -t F < <(ls out/frames/*.png | sort)
+          n=${#F[@]}
+          for i in 0 1 2 3 4 5; do j=$(( i * n / 6 )); cp "${F[$j]}" "out/stills/still_$(printf %03d $j).png"; done
+          h=$(( n / 2 ))
+          # recortes 1:1 para revisar costuras: capucha, mano izquierda, mano derecha, ruedo (cuadro del medio)
+          ffmpeg -y -loglevel error -i "${F[$h]}" -vf crop=440:520:330:140 out/stills/zoom_capucha.png
+          ffmpeg -y -loglevel error -i "${F[$h]}" -vf crop=400:420:40:880 out/stills/zoom_mano_izq.png
+          ffmpeg -y -loglevel error -i "${F[$h]}" -vf crop=400:420:700:880 out/stills/zoom_mano_der.png
+          ffmpeg -y -loglevel error -i "${F[$h]}" -vf crop=1080:420:0:1440 out/stills/zoom_ruedo.png
+          # hoja de contacto: 0, 1/4, 1/2, 3/4 del loop
+          ffmpeg -y -loglevel error -i "${F[0]}" -i "${F[$(( n / 4 ))]}" -i "${F[$h]}" -i "${F[$(( 3 * n / 4 ))]}" \
+            -filter_complex "[0]scale=360:-1[a];[1]scale=360:-1[b];[2]scale=360:-1[c];[3]scale=360:-1[d];[a][b][c][d]hstack=4" out/stills/contacto.png
+          # diferencia entre el cuadro 0 y el del medio (dónde hay movimiento)
+          ffmpeg -y -loglevel error -i "${F[0]}" -i "${F[$h]}" -filter_complex "[0][1]blend=all_mode=difference,eq=brightness=0.0:contrast=4,scale=540:-1" out/stills/diferencia.png
+          rm -rf out/frames
+          ls -la out out/stills out/debug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: godot
+          path: out/
+          retention-days: 7
