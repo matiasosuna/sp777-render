@@ -1,0 +1,50 @@
+name: capas
+# Capas para animar una ilustración al estilo Live2D (17/11/2026): escala con Real-ESRGAN anime, recorta el personaje
+# (rembg: BiRefNet / isnet-anime), rehace el fondo con LaMa y saca el anillo de runas y los puntos que brillan.
+# Todo en CPU; los modelos quedan en caché. El resultado (out/) queda como artefacto.
+on:
+  workflow_dispatch:
+    inputs:
+      carpeta:
+        description: 'carpeta de pruebas/ con fuente.png y capas.py'
+        default: 'pruebas/encapuchado-anime'
+      args:
+        description: 'argumentos (escala=esr|lanczos corte=birefnet-general|isnet-anime dilatar=20)'
+        default: ''
+permissions:
+  contents: read
+jobs:
+  capas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.u2net
+            /tmp/esr.pth
+            /tmp/big-lama.pt
+          key: capas-v1
+      - name: deps
+        run: |
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q "rembg[cpu]" spandrel opencv-python-headless pillow numpy
+      - name: capas
+        env:
+          CARPETA: ${{ inputs.carpeta }}
+          ARGS: ${{ inputs.args }}
+        run: |
+          case "$CARPETA" in *..*|/*) echo "carpeta inválida"; exit 1;; esac
+          python "$CARPETA/capas.py" "$CARPETA" $ARGS
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capas
+          path: out/
+          retention-days: 7
