@@ -1,0 +1,201 @@
+name: hf20
+run-name: hf20 ${{ inputs.modo }} ${{ inputs.ref }}
+# Láminas HyperFrames (18/11/2026): las composiciones videos/hf/<carpeta>/ de spiritual-practices en un commit exacto,
+# sobre la voz guardada de cada técnica (practicas/voces.json → Telegram). Un job por carpeta, en paralelo.
+# modo hoja: sin render; abre la página en Chrome, salta a cada frase y saca una hoja de contactos (unos 3 min).
+# modo video: render entero de HyperFrames, mp4 en 540p y hoja de 16 cuadros. No manda nada a Telegram.
+# Los registros no muestran el guion.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'commit (SHA completo) de spiritual-practices'
+        required: true
+      carpetas:
+        description: 'carpetas de videos/hf (ej. 478-lam g0022-lamina); la técnica es lo de antes de -lam'
+        required: true
+      modo:
+        type: choice
+        options: [hoja, video]
+        default: hoja
+      tiempos:
+        description: 'hoja: cuadros sueltos en 540x960 (segundos, con comas)'
+        default: ''
+      calidad:
+        type: choice
+        options: [looks, draft, delivery]
+        default: looks
+permissions: {}
+jobs:
+  lista:
+    runs-on: ubuntu-latest
+    outputs:
+      c: ${{ steps.l.outputs.c }}
+    steps:
+      - id: l
+        env:
+          C: ${{ inputs.carpetas }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os, re
+          c = [x for x in re.split(r'[\s,]+', os.environ['C']) if x]
+          assert c and all(re.fullmatch(r'[A-Za-z0-9_-]+', x) for x in c), 'carpetas inválidas'
+          print('c=' + json.dumps(c))
+          EOF
+  hf:
+    needs: lista
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        carpeta: ${{ fromJSON(needs.lista.outputs.c) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARPETA: ${{ matrix.carpeta }}
+      MODO: ${{ inputs.modo }}
+      TIEMPOS: ${{ inputs.tiempos }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      DO_NOT_TRACK: '1'
+      HYPERFRAMES_TELEMETRY: '0'
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: |
+            videos/hf
+            practicas
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/hyperframes
+            ~/.cache/puppeteer
+          key: hf20-v1
+      - name: tools
+        run: |
+          T0=$(date +%s)
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji > /dev/null
+          if [ "$MODO" = video ]; then
+            npx -y hyperframes@0.9.12 browser ensure > hf.log 2>&1 || (tail -5 hf.log; exit 1)
+          else
+            mkdir -p ~/pp && (cd ~/pp && npm init -y > /dev/null && npm i --no-audit --no-fund puppeteer@23.11.1 > /dev/null 2>&1) || exit 1
+          fi
+          echo "tools $(( $(date +%s) - T0 )) s"
+      - name: voice
+        run: |
+          ID="${CARPETA%%-lam*}"; echo "ID=$ID" >> "$GITHUB_ENV"
+          FID=$(ID="$ID" python -c "import json,os;print(json.load(open('practicas/voces.json'))[os.environ['ID']]['file_id'])")
+          mkdir -p voz && python practicas/telegram.py bajar "$FID" voz.tgz && tar xzf voz.tgz -C voz
+          if [ -f voz/voz.flac ]; then ffmpeg -v error -y -i voz/voz.flac voz/voz.wav; fi
+          ls voz
+      - name: build
+        run: |
+          test -f "videos/hf/$CARPETA/index.html"
+          if [ "$MODO" = video ]; then npx -y hyperframes@0.9.12 init hf0 --skip-skills >> hf.log 2>&1 || true; fi
+          python videos/hf/armar.py "$ID" voz build --entero --plantilla "$CARPETA"
+          if [ -d hf0 ]; then cp -rn hf0/. build/ 2>/dev/null || true; rm -f build/compositions/*.html.example; fi
+          ls build
+      - name: hoja
+        if: inputs.modo == 'hoja'
+        run: |
+          mkdir -p salida cuadros
+          cat > hoja.js <<'EOF'
+          const fs = require('fs'), path = require('path'), puppeteer = require(process.env.HOME + '/pp/node_modules/puppeteer');
+          (async () => {
+            const dir = path.resolve('build'), html = fs.readFileSync(dir + '/index.html', 'utf8');
+            const fams = new Set([...html.matchAll(/font-family:\s*["']([^"',;]+)["']/g)].map((m) => m[1].trim()));
+            let links = '';
+            fams.forEach((f) => [400, 500, 600, 700, 800].forEach((w) => { links += `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f.replace(/ /g, '+')}:wght@${w}&display=block">`; links += `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${f.replace(/ /g, '+')}:ital,wght@1,${w}&display=block">`; }));
+            fs.writeFileSync(dir + '/_hoja.html', html.replace('</head>', links + '</head>'));
+            const b = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });
+            const p = await b.newPage(), errores = [];
+            p.on('pageerror', (e) => errores.push('pageerror: ' + String(e.message).slice(0, 300)));
+            p.on('console', (m) => { if (m.type() === 'error') errores.push('console: ' + m.text().slice(0, 300)); });
+            await p.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 0.25 });
+            await p.goto('file://' + dir + '/_hoja.html', { waitUntil: 'networkidle0', timeout: 90000 });
+            await p.evaluate(() => document.fonts.ready);
+            await new Promise((r) => setTimeout(r, 1500));
+            const TL = await p.evaluate(() => window.TL ? { fin: window.TL.fin, frases: window.TL.frases } : null);
+            if (!TL) { errores.push('sin window.TL'); }
+            const fr = Object.entries(TL ? TL.frases : {}).sort((a, b) => a[1][0] - b[1][0]);
+            let ts = [[0.4, 'inicio']];
+            fr.forEach(([f, [a, z]]) => ts.push([a + Math.min(1.4, Math.max(0.3, (z - a) * 0.6)), f]));
+            if (TL) ts.push([TL.fin - 0.3, 'fin']);
+            const seek = async (t) => p.evaluate((t) => {
+              const tl = window.__timelines && window.__timelines.main; if (tl && tl.seek) tl.seek(t, false);
+              window.dispatchEvent(new CustomEvent('hf-seek', { detail: { time: t } }));
+            }, t);
+            const tag = async (txt) => p.evaluate((txt) => {
+              let d = document.getElementById('__tag'); if (!d) { d = document.createElement('div'); d.id = '__tag'; d.style.cssText = 'position:fixed;left:0;top:1856px;width:1080px;height:64px;background:#000;color:#ff0;font:700 48px monospace;z-index:99999;padding-left:16px'; document.body.appendChild(d); }
+              d.textContent = txt; d.style.display = txt ? 'block' : 'none';
+            }, txt);
+            const chk = await p.evaluate(() => ({ tl: !!(window.__timelines && window.__timelines.main), w: document.documentElement.scrollWidth }));
+            if (!chk.tl) errores.push('sin window.__timelines.main');
+            for (let i = 0; i < ts.length; i++) {
+              const [t, f] = ts[i]; await seek(t); await tag(`${t.toFixed(1)}s  ${f}`);
+              await new Promise((r) => setTimeout(r, 60));
+              await p.screenshot({ path: `cuadros/${String(i).padStart(3, '0')}.png` });
+            }
+            await tag('');
+            const extra = (process.env.TIEMPOS || '').split(',').map((x) => parseFloat(x)).filter((x) => !isNaN(x));
+            if (extra.length) {
+              await p.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 0.5 });
+              for (const t of extra) { await seek(t); await new Promise((r) => setTimeout(r, 80)); await p.screenshot({ path: `salida/${process.env.CARPETA}-t${t.toFixed(1)}.png` }); }
+            }
+            fs.writeFileSync('salida/errores.txt', errores.join('\n') || 'sin errores');
+            fs.writeFileSync('salida/info.txt', `dur ${TL ? TL.fin : '?'} s, ${ts.length} cuadros`);
+            console.log(errores.length ? errores.join('\n') : 'sin errores'); console.log(`dur ${TL ? TL.fin : '?'}`);
+            await b.close();
+          })().catch((e) => { console.error('fallo', e.message); fs.writeFileSync('salida/errores.txt', 'fallo: ' + e.message); process.exit(1); });
+          EOF
+          node hoja.js
+          i=0; for f in $(ls cuadros | sort); do g=$((i / 18 + 1)); mkdir -p "g$g"; cp "cuadros/$f" "g$g/$(printf %02d $((i % 18))).png"; i=$((i + 1)); done
+          for d in g*; do ffmpeg -v error -y -framerate 1 -i "$d/%02d.png" -vf "tile=6x3:padding=4:color=white" -frames:v 1 "salida/$CARPETA-hoja${d#g}.jpg" || true; done
+          ls salida
+      - name: check
+        if: inputs.modo == 'video'
+        working-directory: build
+        run: |
+          npx -y hyperframes@0.9.12 lint > ../lint.txt 2>&1 || true
+          npx -y hyperframes@0.9.12 check --json > ../check.json 2>../check.err || true
+          tail -20 ../lint.txt | grep -v -i -E 'said|text' || true
+      - name: render
+        if: inputs.modo == 'video'
+        working-directory: build
+        run: |
+          T0=$(date +%s)
+          npx -y hyperframes@0.9.12 render --quality ${{ inputs.calidad }} -o ../out.mp4 > ../render.log 2>&1 || { tail -c 1500 ../render.log | grep -v -i -E 'said|text' ; exit 1; }
+          echo "render $(( $(date +%s) - T0 )) s" | tee ../tiempo.txt
+      - name: salida
+        if: inputs.modo == 'video'
+        run: |
+          mkdir -p salida fotos
+          ffmpeg -v error -y -i out.mp4 -vf scale=540:960 -c:v libx264 -preset slow -crf 24 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart "salida/$CARPETA-540p.mp4"
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
+          for k in $(seq 1 16); do
+            T=$(python -c "print($DUR*($k-0.5)/16)")
+            ffmpeg -v error -y -ss "$T" -i out.mp4 -frames:v 1 -vf scale=270:480 "fotos/$(printf %02d $k).png"
+          done
+          ffmpeg -v error -y -framerate 1 -i fotos/%02d.png -vf "tile=8x2:padding=4:color=white" -frames:v 1 "salida/$CARPETA-hoja.jpg"
+          echo "dur $DUR s, $(cat tiempo.txt)" > salida/info.txt; cat salida/info.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hf20-${{ matrix.carpeta }}
+          path: |
+            salida/
+            lint.txt
+            check.json
+            render.log
+          retention-days: 7
