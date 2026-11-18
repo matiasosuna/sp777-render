@@ -16,6 +16,9 @@ on:
       sim_run:
         description: 'id de un run anterior para reusar su simulación (vacío = simular de nuevo)'
         default: ''
+      fast:
+        description: 'modo rápido: sin simulación de tela (piel + resorte), 18 tramos'
+        default: 'false'
 permissions:
   contents: read
   actions: read
@@ -25,7 +28,7 @@ env:
   RUN_BLENDER: ~/blender/blender -b --factory-startup --python-exit-code 1 --python blender/mago.py --
 jobs:
   sim:
-    if: inputs.sim_run == ''
+    if: inputs.sim_run == '' && inputs.fast != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -71,6 +74,7 @@ jobs:
       - *download
       - *libs
       - uses: actions/download-artifact@v4
+        if: inputs.fast != 'true'
         with:
           name: sim
           path: sim
@@ -80,7 +84,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p out
-          time eval $RUN_BLENDER --stage stills --look ${{ inputs.look }} --cache sim/sim.npz --out out 2>&1 | tee out/log_stills.txt
+          time eval $RUN_BLENDER --stage stills --look ${{ inputs.look }} ${{ inputs.fast == 'true' && '--fast' || '--cache sim/sim.npz' }} --out out 2>&1 | tee out/log_stills.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -95,13 +99,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        chunk: ${{ fromJSON(inputs.fast == 'true' && '[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]' || '[0,1,2,3,4,5,6,7,8,9,10,11]') }}
     steps:
       - uses: actions/checkout@v4
       - *cache
       - *download
       - *libs
       - uses: actions/download-artifact@v4
+        if: inputs.fast != 'true'
         with:
           name: sim
           path: sim
@@ -111,7 +116,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p out
-          time eval $RUN_BLENDER --stage render --look ${{ inputs.look }} --cache sim/sim.npz --chunk ${{ matrix.chunk }} --nchunks 12 \
+          time eval $RUN_BLENDER --stage render --look ${{ inputs.look }} ${{ inputs.fast == 'true' && '--fast' || '--cache sim/sim.npz' }} --chunk ${{ matrix.chunk }} --nchunks ${{ inputs.fast == 'true' && 18 || 12 }} \
             --samples ${{ inputs.samples }} --out out 2>&1 | tee out/log_render.txt
       - uses: actions/upload-artifact@v4
         with:

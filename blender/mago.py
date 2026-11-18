@@ -26,6 +26,7 @@ ap.add_argument('--chunk', type=int, default=0)
 ap.add_argument('--nchunks', type=int, default=1)
 ap.add_argument('--samples', type=int, default=0)
 ap.add_argument('--look', default='pixar', choices=['pixar', 'anime'])
+ap.add_argument('--fast', action='store_true', help='sin simulación de tela: caída en reposo + piel + resorte por vértice')
 ap.add_argument('--bvh', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'taichi_cmu12_04.bvh'))
 args = ap.parse_args(argv)
 OUT = os.path.abspath(args.out)
@@ -1097,6 +1098,74 @@ if args.stage == 'sim':
         for m in list(ob.modifiers):
             ob.modifiers.remove(m)
     CACHE = cache
+elif args.fast:
+    # 1) caída de la tela una sola vez, en la pose de reposo (30 cuadros, sin autocolisión)
+    t = time.time()
+    act = B.animation_data.action
+    B.animation_data.action = None
+    for pb in B.pose.bones:
+        for c in pb.constraints:
+            c.influence = 0.0
+    for ob in CLOTH:
+        add_armature(ob)
+    cloth_mod(ROBE_OB, 'robe', mass=0.25, tension=25, bending=2.0, shear=8, air=1.5, quality=4)
+    cloth_mod(COAT, 'coat', mass=0.30, tension=30, bending=3.0, shear=8, air=1.5, quality=4)
+    for sl in SLEEVES:
+        cloth_mod(sl, 'sleeve', mass=0.18, tension=15, bending=0.5, air=1.2, quality=4, pin_stiff=0.6)
+    for f in range(1, 31):
+        scene.frame_set(f)
+    deps = bpy.context.evaluated_depsgraph_get()
+    draped = {}
+    for ob in CLOTH:
+        m = ob.evaluated_get(deps).to_mesh()
+        arr = np.empty(len(m.vertices) * 3, np.float32); m.vertices.foreach_get('co', arr)
+        ob.evaluated_get(deps).to_mesh_clear()
+        draped[ob.name] = arr
+    for ob in CLOTH:
+        for m in list(ob.modifiers):
+            if m.type == 'CLOTH':
+                ob.modifiers.remove(m)
+        ob.data.vertices.foreach_set('co', draped[ob.name]); ob.data.update()
+    B.animation_data.action = act
+    scene.frame_set(1)
+    log('caída en reposo %.1fs' % (time.time() - t))
+    # 2) piel + resorte amortiguado por vértice (más suelto lejos de lo fijado)
+    t = time.time()
+    pins = {}
+    for ob in CLOTH:
+        w = np.zeros(len(ob.data.vertices), np.float32)
+        gi = ob.vertex_groups['pin'].index
+        for v in ob.data.vertices:
+            for g in v.groups:
+                if g.group == gi:
+                    w[v.index] = g.weight
+        pins[ob.name] = w
+    CACHE = {ob.name: np.zeros((NCLIP, len(ob.data.vertices), 3), np.float32) for ob in CLOTH}
+    st = {}
+    for f in range(1, LAST + 1):
+        scene.frame_set(f)
+        deps = bpy.context.evaluated_depsgraph_get()
+        for ob in CLOTH:
+            ev = ob.evaluated_get(deps); m = ev.to_mesh()
+            T = np.empty(len(m.vertices) * 3, np.float32); m.vertices.foreach_get('co', T); ev.to_mesh_clear()
+            T = T.reshape(-1, 3)
+            free = (1.0 - pins[ob.name])[:, None]
+            if ob.name not in st:
+                st[ob.name] = [T.copy(), np.zeros_like(T)]
+            P, V = st[ob.name]
+            k = 0.22 - 0.12 * free
+            V[:] = V * 0.80 + (T - P) * k
+            P[:] = P + V
+            off = P - T
+            n = np.linalg.norm(off, axis=1, keepdims=True)
+            off *= np.minimum(1.0, 0.10 / (n + 1e-9))
+            P[:] = T + off
+            if f >= PRE:
+                CACHE[ob.name][f - PRE] = T + off * free
+    for ob in CLOTH:
+        for m in list(ob.modifiers):
+            ob.modifiers.remove(m)
+    log('piel + resorte %.1fs' % (time.time() - t))
 else:
     CACHE = dict(np.load(args.cache))
     log('caché cargada', {k: v.shape for k, v in CACHE.items()})
