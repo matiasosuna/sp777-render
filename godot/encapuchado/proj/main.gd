@@ -128,10 +128,12 @@ func _ready() -> void:
 	var soft := radial_tex(128, 2.4)
 	var core := radial_tex(64, 1.4)
 	for o in L.ojos:
-		var pos := Vector2(o[0], o[1]) - G["head"]
+		var hg: Vector2 = G["head"]
+		var pos: Vector2 = Vector2(o[0], o[1]) - hg
 		add_glow(B["head"], soft, pos, 70.0, Color(0.35, 0.9, 1.0), 0.42, 0.22, 0.0)
 		add_glow(B["head"], core, pos, 20.0, Color(0.7, 1.0, 1.0), 0.55, 0.25, 0.0)
-	var gp := Vector2(L.gema[0], L.gema[1]) - G["chest"]
+	var cg: Vector2 = G["chest"]
+	var gp: Vector2 = Vector2(L.gema[0], L.gema[1]) - cg
 	add_glow(B["chest"], soft, gp, 190.0, Color(0.3, 0.85, 1.0), 0.30, 0.18, 0.9)
 	add_glow(B["chest"], core, gp, 56.0, Color(0.65, 1.0, 1.0), 0.45, 0.25, 0.9)
 
@@ -409,7 +411,7 @@ func pose(t: float) -> void:
 	ring_glow.modulate = Color(1, 1, 1, 0.18 + 0.3 * pul)
 
 	for g in glows:
-		var p := 0.5 + 0.5 * sin(2.0 * w * t + g[3])
+		var p: float = 0.5 + 0.5 * sin(2.0 * w * t + float(g[3]))
 		g[0].modulate.a = g[1] + g[2] * p
 
 	for fx in [back_fx, front_fx, front_fx.get_meta("back")]:

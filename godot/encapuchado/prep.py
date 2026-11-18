@@ -92,6 +92,9 @@ for i in range(1, n):
     x, y, w, h, area = st[i]
     if area < 1500 and x > 0 and y > 0 and x + w < W and y + h < H:
         a[lab == i] = 1.0
+# el piso oscuro entre las botas y debajo del ruedo no es personaje
+CORTE_Y = float(args.get('corte_y', '1828'))
+a = a * np.clip((CORTE_Y - np.arange(H, dtype=np.float32)) / 14, 0, 1)[:, None]
 fig = (a > 0.02).astype(np.uint8)
 hueco = cv2.dilate(fig, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * DIL + 1, 2 * DIL + 1)))
 Image.fromarray((a * 255).astype(np.uint8)).save(f'{CTL}/mascara.png')
