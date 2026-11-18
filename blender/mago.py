@@ -427,7 +427,7 @@ M['robe'] = robe_mat()
 M['robe_in'] = plain_mat('tunica_dentro', (0.005, 0.005, 0.012))
 M['rope'] = plain_mat('soga', (0.30, 0.17, 0.075), rough=0.7, sheen=0.3, bump=0.6)
 M['gold'] = plain_mat('oro', (0.85, 0.60, 0.25), rough=0.3, sheen=0.0, metal=1.0, bump=0.0)
-M['skin'] = plain_mat('piel', (0.62, 0.43, 0.35), rough=0.6, sheen=0.1, bump=0.05)
+M['skin'] = plain_mat('piel', (0.78, 0.58, 0.48), rough=0.6, sheen=0.1, bump=0.05)
 M['face'] = emit_mat('cara', (0.0, 0.0, 0.0), 0.0)
 M['eye'] = emit_mat('ojos', (0.25, 1.0, 0.92), 14.0)
 M['gem'] = emit_mat('gema', (0.05, 0.75, 0.95), 1.6)
@@ -522,18 +522,20 @@ for rv in RIM_VECS:
 if LOOK == 'anime':
     M['gem'].node_tree.nodes['Emission'].inputs['Strength'].default_value = 6.0
 
-# B copia las rotaciones de mundo de A; entra de a poco en los cuadros de preparación
+# B copia las rotaciones de mundo de A; entra de a poco en los cuadros de preparación.
+# Pies plantados: cadera y piernas quedan en reposo (sin pasos ni postura ancha); la torsión sale de la columna.
+LEG_BONES = {'Hips', 'LHipJoint', 'RHipJoint', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg',
+             'LeftFoot', 'RightFoot', 'LeftToeBase', 'RightToeBase'}
+GAIN = {'LowerBack': 0.75, 'Spine': 0.85}
 for pb in B.pose.bones:
-    cons = []
+    if pb.name in LEG_BONES:
+        continue
     c = pb.constraints.new('COPY_ROTATION'); c.target = A; c.subtarget = pb.name
-    c.owner_space = 'WORLD'; c.target_space = 'WORLD'; cons.append(c)
-    if pb.name == 'Hips':
-        c2 = pb.constraints.new('COPY_LOCATION'); c2.target = A; c2.subtarget = 'Hips'
-        c2.owner_space = 'WORLD'; c2.target_space = 'WORLD'; cons.append(c2)
-    for c in cons:
-        c.influence = 0.0; c.keyframe_insert('influence', frame=1)
-        c.influence = 0.0; c.keyframe_insert('influence', frame=2)
-        c.influence = 1.0; c.keyframe_insert('influence', frame=PRE - 11)
+    c.owner_space = 'WORLD'; c.target_space = 'WORLD'
+    g = GAIN.get(pb.name, 1.0)
+    c.influence = 0.0; c.keyframe_insert('influence', frame=1)
+    c.influence = 0.0; c.keyframe_insert('influence', frame=2)
+    c.influence = g; c.keyframe_insert('influence', frame=PRE - 11)
 if B.animation_data and B.animation_data.action:
     for fc in B.animation_data.action.fcurves:
         for kp in fc.keyframe_points:
@@ -648,7 +650,7 @@ J = JN
 Z1, ZS, ZH, ZN, ZHD = J['Spine1'].z, J['Spine'].z, J['Hips'].z, J['Neck1'].z, J['Head'].z
 ZSH = J['LeftArm'].z
 YC = J['Spine1'].y
-HEM = F0 + 0.065
+HEM = F0 + 0.03
 log('alturas (B): piso %.3f cadera %.3f spine %.3f spine1 %.3f hombro %.3f cuello %.3f cabeza %.3f' % (F0, ZH, ZS, Z1, ZSH, ZN, ZHD))
 
 def ring_rows(keys, n, nu, open_angle=False):
@@ -714,7 +716,7 @@ def make_coat():
         (Z1 - 0.06, 0.190, 0.135, ycs, 0.44),
         (ZH, 0.228, 0.172, J['Hips'].y, 0.48),
         (F0 + 0.40, 0.290, 0.225, J['Hips'].y, 0.52),
-        (HEM, 0.340, 0.265, J['Hips'].y, 0.54),
+        (HEM - 0.012, 0.340, 0.265, J['Hips'].y, 0.54),
     ]
     NU, NV = 124, 60
     P = ring_rows(keys, NV, NU, open_angle=True)
@@ -767,7 +769,7 @@ def make_sleeve(side, sgn):
     dcuff = sv[-1][None, :] - sv
     set_uv(ob, 'trim', np.stack([dcuff, su], -1))
     set_uv(ob, 'kind', np.zeros((nv * nu, 2)))
-    pw = 1.0 - 0.92 * smoothstep(0.25, 0.95, fr)
+    pw = 1.0 - smoothstep(0.10, 0.42, fr)
     vgroup(ob, 'pin', np.arange(nv * nu), np.repeat(pw, nu))
     skin_prox(ob, [side + 'Shoulder', side + 'Arm', side + 'ForeArm'])
     ob.data.materials.append(M['sleeve']); ob.data.materials.append(M['coat_in'])
@@ -866,7 +868,7 @@ def make_head():
 # --- manos (piel) con dedos
 def voxelize(ob, size):
     rm = ob.modifiers.new('Remesh', 'REMESH'); rm.mode = 'VOXEL'; rm.voxel_size = size; rm.adaptivity = 0.0
-    sm = ob.modifiers.new('Suave', 'SMOOTH'); sm.factor = 0.5; sm.iterations = 4
+    sm = ob.modifiers.new('Suave', 'SMOOTH'); sm.factor = 0.6; sm.iterations = 10
     deps = bpy.context.evaluated_depsgraph_get()
     me2 = bpy.data.meshes.new_from_object(ob.evaluated_get(deps))
     old = ob.data
@@ -1057,8 +1059,8 @@ for ob in SKINNED:
 if args.stage == 'sim':
     for ob in CLOTH:
         add_armature(ob)
-    cloth_mod(ROBE_OB, 'robe', mass=0.25, tension=20, bending=0.6, air=1.5)
-    cloth_mod(COAT, 'coat', mass=0.30, tension=25, bending=1.0, shear=8, air=1.5, quality=7, self_col=True, dist=0.007)
+    cloth_mod(ROBE_OB, 'robe', mass=0.25, tension=25, bending=2.0, shear=8, air=1.5)
+    cloth_mod(COAT, 'coat', mass=0.30, tension=25, bending=1.6, shear=8, air=1.5, quality=7, self_col=True, dist=0.007)
     for sl in SLEEVES:
         cloth_mod(sl, 'sleeve', mass=0.18, tension=15, bending=0.5, air=1.2, self_col=True, pin_stiff=0.6)
     cloth_mod(CAPE, 'cape', mass=0.2, tension=20, bending=2.0, air=1.2, dist=0.008)
