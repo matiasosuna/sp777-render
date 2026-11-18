@@ -25,7 +25,7 @@ var POSES := {
 	# bases de escena
 	"de_pie": {},
 	"escritorio": {"muL": Vector2(430, 965), "muR": Vector2(668, 970), "manoL": 18.0, "manoR": -22.0, "cabeza_y": 6.0, "viento": 0.0},
-	"sentado": {"muL": Vector2(330, 1035), "muR": Vector2(768, 1035), "manoL": -10.0, "manoR": 10.0, "viento": 0.3},
+	"sentado": {"muL": Vector2(285, 985), "muR": Vector2(813, 985), "manoL": 30.0, "manoR": -30.0, "viento": 0.3},
 	# poses de gesto
 	"escribir_a": {"muL": Vector2(425, 962), "manoL": 22.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 2.0},
 	"escribir_b": {"muL": Vector2(445, 972), "manoL": 14.0, "pluma": 1.0, "cabeza_y": 9.0, "cabeza": 1.0},
@@ -33,11 +33,11 @@ var POSES := {
 	"mira_arriba": {"muL": Vector2(430, 960), "manoL": 18.0, "pluma": 1.0, "cabeza_y": -3.0, "cabeza": -3.0},
 	"inhalar": {"pecho": 16.0, "hombros": 20.0, "pecho_esc": 0.035, "cabeza_y": -5.0, "luz_pecho": 1.0},
 	"exhalar": {"pecho": -3.0, "hombros": -4.0, "pecho_esc": -0.005, "cabeza_y": 2.0, "luz_pecho": 0.1},
-	"brazos_arriba": {"muL": Vector2(190, 395), "muR": Vector2(908, 395), "manoL": -25.0, "manoR": 25.0,
+	"brazos_arriba": {"muL": Vector2(250, 290), "muR": Vector2(848, 290), "manoL": -25.0, "manoR": 25.0,
 		"hombros": 14.0, "pecho": 8.0, "pecho_esc": 0.02, "cabeza_y": -6.0},
 	"brazos_medio": {"muL": Vector2(150, 600), "muR": Vector2(948, 600), "manoL": -15.0, "manoR": 15.0, "hombros": 8.0, "pecho": 5.0},
 	"medita_in": {"pecho": 7.0, "hombros": 8.0, "pecho_esc": 0.015, "luz_pecho": 0.8},
-	"invitar": {"muL": Vector2(190, 905), "muR": Vector2(908, 905), "manoL": 20.0, "manoR": -20.0, "cabeza": 3.0, "cabeza_y": -2.0,
+	"invitar": {"muL": Vector2(175, 880), "muR": Vector2(923, 880), "manoL": 20.0, "manoR": -20.0, "cabeza": 3.0, "cabeza_y": -2.0,
 		"luz_pecho": 0.6, "hombros": 4.0},
 }
 
@@ -53,8 +53,8 @@ var ACCIONES := {
 }
 
 # cuadrado de luz delante del pecho: cada fase (inhala, retiene, exhala, retiene) dibuja un lado
-const CENTRO := Vector2(549, 745)
-const MEDIO := 110.0
+const CENTRO := Vector2(549, 730)
+const MEDIO := 165.0
 
 
 func esquinas() -> Array:
@@ -77,7 +77,7 @@ func fn_cuadrado(u: float, dur: float) -> Dictionary:
 		r = 1.0 - f
 	return {
 		"apunta": p, "apunta_w": 1.0,
-		"muL": p + Vector2(-125, 62), "muR": p + Vector2(125, 62),
+		"muL": p + Vector2(-110, 80), "muR": p + Vector2(110, 80),
 		"cuadrado": i + f, "cuadrado_a": 1.0, "chispa": 1.0,
 		"pecho": 9.0 * r, "hombros": 10.0 * r, "pecho_esc": 0.02 * r, "luz_pecho": 0.5 * r,
 	}

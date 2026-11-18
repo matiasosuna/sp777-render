@@ -8,6 +8,13 @@
    "esc": 1.0,
    "rot": -116,
    "lado": "L"
+  },
+  "sentado": {
+   "pos": [
+    -73,
+    165
+   ],
+   "esc": 1.0
   }
  },
  "velas": [
@@ -143,14 +150,14 @@
    "fondo": "noche",
    "base": "sentado",
    "cuerpo": "sentado",
-   "esc": 0.95,
+   "esc": 1.15,
    "ancla": [
     549,
-    900
+    780
    ],
    "en": [
     540,
-    1000
+    900
    ],
    "zoom": [
     1.0,

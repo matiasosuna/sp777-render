@@ -299,7 +299,9 @@ func paso(t: float) -> void:
 		for k in frentes:
 			for f in frentes[k]:
 				f.visible = e.has("frente") and k == e.frente
-		rig.sentado(String(e.get("cuerpo", "pie")) == "sentado")
+		var sen := String(e.get("cuerpo", "pie")) == "sentado"
+		rig.sentado(sen)
+		sombra.position = Vector2(549, 1330 if sen else 1792)
 	var efx: Array = e.get("efectos", [])
 
 	# encuadre del personaje (+ vaivén del bote)
