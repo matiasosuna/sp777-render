@@ -113,7 +113,7 @@ jobs:
           ffmpeg -y -loglevel error -i "${F[0]}" -i "${F[$(( n / 4 ))]}" -i "${F[$h]}" -i "${F[$(( 3 * n / 4 ))]}" \
             -filter_complex "[0]scale=360:-1[a];[1]scale=360:-1[b];[2]scale=360:-1[c];[3]scale=360:-1[d];[a][b][c][d]hstack=4" out/stills/contacto.png
           # diferencia entre el cuadro 0 y el del medio (dónde hay movimiento)
-          ffmpeg -y -loglevel error -i "${F[0]}" -i "${F[$h]}" -filter_complex "[0][1]blend=all_mode=difference,eq=brightness=0.0:contrast=4,scale=540:-1" out/stills/diferencia.png
+          ffmpeg -y -loglevel error -i "${F[0]}" -i "${F[$h]}" -filter_complex "[0]format=gbrp[a];[1]format=gbrp[b];[a][b]blend=all_mode=difference,lutrgb=r=val*5:g=val*5:b=val*5,scale=540:-1" out/stills/diferencia.png
           rm -rf out/frames
           ls -la out out/stills out/debug
       - uses: actions/upload-artifact@v4

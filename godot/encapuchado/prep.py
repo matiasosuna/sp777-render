@@ -224,11 +224,14 @@ log('personaje')
 # ---------- 7. ojos, gema, estrellas ----------
 cian = ((bi[..., 2] > 170) & (bi[..., 1] > 150) & (bi[..., 0] < 150) & (bi[..., 2] - bi[..., 0] > 70)).astype(np.uint8) * fig
 n, lab, st, cen = cv2.connectedComponentsWithStats(cian, 8)
-manchas = [dict(x=float(cen[i][0]), y=float(cen[i][1]), area=int(st[i][4])) for i in range(1, n) if st[i][4] >= 8]
-ojos = sorted([m for m in manchas if 300 < m['y'] < 460 and 420 < m['x'] < 680], key=lambda m: -m['area'])[:2]
-ojos = sorted([[round(m['x'], 1), round(m['y'], 1)] for m in ojos])
-if len(ojos) < 2:
-    ojos = [[513.0, 374.0], [589.0, 374.0]]
+manchas = [dict(x=float(cen[i][0]), y=float(cen[i][1]), area=int(st[i][4]), w=int(st[i][2]), h=int(st[i][3]))
+           for i in range(1, n) if st[i][4] >= 8]
+# ojos: manchas chicas y compactas, las más cercanas a donde están en la ilustración (no el borde cian de la capucha)
+ojos = []
+for ex, ey in [(510.0, 374.0), (588.0, 374.0)]:
+    cand = [m for m in manchas if m['w'] <= 50 and m['h'] <= 30 and np.hypot(m['x'] - ex, m['y'] - ey) < 40]
+    cand.sort(key=lambda m: np.hypot(m['x'] - ex, m['y'] - ey))
+    ojos.append([round(cand[0]['x'], 1), round(cand[0]['y'], 1)] if cand else [ex, ey])
 gemas = sorted([m for m in manchas if 680 < m['y'] < 840 and 470 < m['x'] < 630], key=lambda m: -m['area'])
 gema = [round(gemas[0]['x'], 1), round(gemas[0]['y'], 1)] if gemas else [549.0, 757.0]
 gris = cv2.cvtColor(fondo, cv2.COLOR_RGB2GRAY).astype(np.float32)

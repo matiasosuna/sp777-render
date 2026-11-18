@@ -170,7 +170,7 @@ func add_particles(fx: FX, rng: RandomNumberGenerator, n: int, sc: float) -> voi
 		fx.items.append({kind = 0, x0 = rng.randf_range(110.0, 990.0), y0 = rng.randf_range(1450.0, 1900.0),
 			dist = rng.randf_range(450.0, 1000.0) * per / 8.0 + 200.0, period = per, ph = rng.randf(),
 			sway = rng.randf_range(6.0, 22.0), k = float(rng.randi_range(1, 2)), psi = rng.randf() * TAU,
-			a0 = rng.randf_range(0.35, 0.8), size = rng.randf_range(7.0, 20.0) * sc,
+			a0 = rng.randf_range(0.5, 0.95), size = rng.randf_range(9.0, 24.0) * sc,
 			col = Color(1.0, 0.82, 0.45) if gold else Color(0.5, 0.92, 1.0)})
 
 
@@ -380,15 +380,15 @@ func pose(t: float) -> void:
 	var e3 := bump(t - 0.7)
 	var D := PI / 180.0
 	setb("spine", Vector2(0, -1.5 * br), 0.5 * D * sin(w * t + 0.4))
-	setb("chest", Vector2(0, -3.0 * br), 0.0, Vector2(1.0 + 0.006 * br, 1.0 + 0.004 * br))
+	setb("chest", Vector2(0, -4.0 * br), 0.0, Vector2(1.0 + 0.008 * br, 1.0 + 0.006 * br))
 	setb("head", Vector2(0, -1.0 * br), 2.2 * D * sin(w * t + 0.3) + 0.6 * D * sin(2.0 * w * t + 1.0))
-	var arm := 7.0 * D * e
+	var arm := 8.5 * D * e
 	setb("armL", Vector2.ZERO, arm)
 	setb("armR", Vector2.ZERO, -arm)
-	setb("handL", Vector2.ZERO, 6.0 * D * e2)
-	setb("handR", Vector2.ZERO, -6.0 * D * e2)
+	setb("handL", Vector2.ZERO, 8.0 * D * e2)
+	setb("handR", Vector2.ZERO, -8.0 * D * e2)
 	# la manga campana cuelga: compensa el giro del brazo y llega tarde
-	var bell := 7.0 * D * (-0.6 * e + 0.5 * (e3 - e)) + 1.0 * D * sin(w * t - 1.2)
+	var bell := 8.5 * D * (-0.6 * e + 0.5 * (e3 - e)) + 1.0 * D * sin(w * t - 1.2)
 	setb("bellL", Vector2.ZERO, bell)
 	setb("bellR", Vector2.ZERO, -bell + 0.4 * D * sin(w * t - 0.5))
 	setb("cloakL", Vector2.ZERO, 0.8 * D * sin(w * t - 1.0) + 0.4 * D * sin(2.0 * w * t - 0.3))
