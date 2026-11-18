@@ -285,8 +285,8 @@ def toon_bsdf(nt, color, gold=None):
     rv = N(nt, 'ShaderNodeCombineXYZ'); RIM_VECS.append(rv)
     dp = N(nt, 'ShaderNodeVectorMath', operation='DOT_PRODUCT')
     nt.links.new(geo.outputs['Normal'], dp.inputs[0]); nt.links.new(rv.outputs[0], dp.inputs[1])
-    side = math_(nt, 'GREATER_THAN', dp.outputs['Value'], val=-0.25)
-    edge = math_(nt, 'GREATER_THAN', lw.outputs['Facing'], val=0.66)
+    side = math_(nt, 'GREATER_THAN', dp.outputs['Value'], val=0.05)
+    edge = math_(nt, 'GREATER_THAN', lw.outputs['Facing'], val=0.74)
     rim = math_(nt, 'MULTIPLY', math_(nt, 'MULTIPLY', side, edge), val=0.8)
     em = N(nt, 'ShaderNodeEmission'); em.inputs['Color'].default_value = (0.22, 0.85, 1.0, 1)
     nt.links.new(rim, em.inputs['Strength'])
@@ -1311,8 +1311,8 @@ if LOOK == 'anime':
     t = time.time()
     IMG_CIRC = rune_circle_image()
     log('círculo de runas %.1fs' % (time.time() - t))
-    BG_PLANE = quad('fondo_circulo', 2.7, decal_mat('fondo_circulo', IMG_CIRC, 1.0))
-    ground = quad('piso_circulo', 2.0, decal_mat('piso_circulo', IMG_CIRC, 0.8))
+    BG_PLANE = quad('fondo_circulo', 2.7, decal_mat('fondo_circulo', IMG_CIRC, 0.7))
+    ground = quad('piso_circulo', 2.0, decal_mat('piso_circulo', IMG_CIRC, 0.6))
     ground.location = (B.location.x, B.location.y, FLOOR + 0.004)
 
 def place_bg(camo):
@@ -1393,11 +1393,11 @@ else:
     ls.select_by_collection = True; ls.collection = C_CHAR; ls.collection_negation = 'INCLUSIVE'
     lst = ls.linestyle or bpy.data.linestyles.new('tinta')
     ls.linestyle = lst
-    lst.color = (0.006, 0.008, 0.025); lst.thickness = 2.6; lst.alpha = 1.0
+    lst.color = (0.004, 0.005, 0.018); lst.thickness = 4.2; lst.alpha = 1.0
     try:
         tm = lst.thickness_modifiers.new('afinar', 'ALONG_STROKE'); tm.mapping = 'CURVE'; tm.blend = 'MULTIPLY'
         cm = tm.curve; pts = cm.curves[0].points
-        pts[0].location = (0, 0.35); pts[1].location = (1, 0.35); pts.new(0.5, 1.0); cm.update()
+        pts[0].location = (0, 0.55); pts[1].location = (1, 0.55); pts.new(0.5, 1.0); cm.update()
     except Exception as e:
         log('modificador de grosor no disponible:', e)
     dn = ct.nodes.new('CompositorNodeDenoise')
