@@ -14,6 +14,13 @@ on:
       args:
         description: 'argumentos para prep.py (k=8 dilatar=18 corte=birefnet-general)'
         default: ''
+      solo_capas:
+        description: 'solo prep.py (sin Godot): para ver grillas y capas'
+        type: boolean
+        default: false
+      fotos:
+        description: 'cuadros para las fotos, separados por espacios (vacío = 6 parejos)'
+        default: ''
 permissions:
   contents: read
 env:
@@ -35,7 +42,7 @@ jobs:
           path: |
             ${{ inputs.carpeta }}/proj/capas
             out/prep
-          key: godot-capas-${{ hashFiles(format('{0}/prep.py', inputs.carpeta), format('{0}/fuente.png', inputs.carpeta)) }}-${{ inputs.args }}
+          key: godot-capas-${{ hashFiles(format('{0}/prep.py', inputs.carpeta), format('{0}/fuente.png', inputs.carpeta), format('{0}/cortes.json', inputs.carpeta), format('{0}/piezas/*', inputs.carpeta)) }}-${{ inputs.args }}
       - if: steps.capas.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
@@ -60,11 +67,13 @@ jobs:
           python "$CARPETA/prep.py" "$CARPETA" $ARGS
           ls -la "$CARPETA/proj/capas" out/prep
       - uses: actions/cache@v4
+        if: ${{ !inputs.solo_capas }}
         id: gd
         with:
           path: ~/godot
           key: godot-bin-${{ env.GV }}
       - name: instalar
+        if: ${{ !inputs.solo_capas }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb xauth libgl1-mesa-dri libglx-mesa0 libegl-mesa0 libgl1 libegl1 libgles2 \
@@ -76,6 +85,7 @@ jobs:
           fi
           ~/godot/godot --version
       - name: render
+        if: ${{ !inputs.solo_capas }}
         env:
           CARPETA: ${{ inputs.carpeta }}
           N: ${{ inputs.cuadros }}
@@ -100,13 +110,17 @@ jobs:
           echo "godot: $(( $(date +%s) - t )) s; cuadros: $(ls out/frames/*.png | wc -l)"
           ls out/frames/*.png > /dev/null
       - name: video
+        if: ${{ !inputs.solo_capas }}
+        env:
+          FOTOS: ${{ inputs.fotos }}
         run: |
           set -e
           ffmpeg -y -loglevel error -framerate 30 -pattern_type glob -i 'out/frames/*.png' \
             -c:v libx264 -preset slow -crf 17 -pix_fmt yuv420p -movflags +faststart out/out.mp4
           mapfile -t F < <(ls out/frames/*.png | sort)
           n=${#F[@]}
-          for i in 0 1 2 3 4 5; do j=$(( i * n / 6 )); cp "${F[$j]}" "out/stills/still_$(printf %03d $j).png"; done
+          if [ -n "$FOTOS" ]; then L="$FOTOS"; else L=""; for i in 0 1 2 3 4 5; do L="$L $(( i * n / 6 ))"; done; fi
+          for j in $L; do [ "$j" -lt "$n" ] && cp "${F[$j]}" "out/stills/still_$(printf %04d $j).png"; done
           h=$(( n / 2 ))
           # recortes 1:1 para revisar costuras: capucha, mano izquierda, mano derecha, ruedo (cuadro del medio)
           ffmpeg -y -loglevel error -i "${F[$h]}" -vf crop=440:520:330:140 out/stills/zoom_capucha.png
