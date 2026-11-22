@@ -1,0 +1,47 @@
+name: imgtest
+# Prueba (22/11/2026): ¿cuánto tarda y cómo sale una imagen pintada en CPU de GitHub? stable-diffusion.cpp, sin GPU, gratis.
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        default: 'Antique hand-painted watercolor and ink illustration, early 1900s: a calm man lying on his back on a simple bed, eyes closed, one hand resting on his solar plexus, soft golden light flowing from his hand along his arm, cream paper, sepia and muted red, fine linework, natural hands, correct anatomy. No text, no letters, no writing, no seal, no signature, no border.'
+permissions: {}
+jobs:
+  img:
+    strategy:
+      fail-fast: false
+      matrix:
+        modelo: [flux-schnell, sdxl-turbo]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: compilar stable-diffusion.cpp (CPU)
+        run: |
+          T0=$(date +%s)
+          git clone -q --recursive --depth 1 https://github.com/leejet/stable-diffusion.cpp sdcpp
+          cmake -S sdcpp -B b -DCMAKE_BUILD_TYPE=Release > /dev/null && cmake --build b -j4 --config Release > build.log 2>&1 || { tail -30 build.log; exit 1; }
+          ls b/bin; echo "compilar $(( $(date +%s) - T0 )) s"
+      - name: bajar modelo
+        run: |
+          T0=$(date +%s); H=https://huggingface.co
+          if [ "${{ matrix.modelo }}" = flux-schnell ]; then
+            for f in flux1-schnell-Q4_0.gguf ae.safetensors clip_l.safetensors t5xxl-Q4_0.gguf; do curl -sL -o $f $H/second-state/FLUX.1-schnell-GGUF/resolve/main/$f; done
+          else
+            curl -sL -o sdxl.safetensors $H/stabilityai/sdxl-turbo/resolve/main/sd_xl_turbo_1.0_fp16.safetensors
+          fi
+          ls -la *.gguf *.safetensors; echo "bajar $(( $(date +%s) - T0 )) s"
+      - name: generar
+        env:
+          P: ${{ inputs.prompt }}
+        run: |
+          SD=$(ls b/bin/sd* | head -1); mkdir -p out; T0=$(date +%s)
+          if [ "${{ matrix.modelo }}" = flux-schnell ]; then
+            $SD --diffusion-model flux1-schnell-Q4_0.gguf --vae ae.safetensors --clip_l clip_l.safetensors --t5xxl t5xxl-Q4_0.gguf -p "$P" --cfg-scale 1.0 --sampling-method euler --steps 4 -W 768 -H 1344 --seed 7 -t 4 -o out/flux.png
+          else
+            $SD -m sdxl.safetensors -p "$P" --cfg-scale 1.0 --sampling-method euler_a --steps 4 -W 576 -H 1024 --seed 7 -t 4 -o out/sdxl.png
+          fi
+          echo "imagen ${{ matrix.modelo }}: $(( $(date +%s) - T0 )) s" | tee out/tiempo-${{ matrix.modelo }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: img-${{ matrix.modelo }}
+          path: out/
