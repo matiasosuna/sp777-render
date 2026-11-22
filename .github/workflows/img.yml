@@ -1,0 +1,143 @@
+name: img
+run-name: img ${{ inputs.ids }}
+# Videos de estudio con imágenes fijas (22/11/2026): voz (Chatterbox CPU, como lam.yml) + imágenes FLUX hechas antes en
+# Modal (img/lanzar.sh desde la Mac, con tope de gasto; quedan en Telegram, practicas/imagenes.json) + ffmpeg.
+# No sube a Telegram ni escribe en el repo: deja mp4-<id> e img-<id> (res.json, hoja) como artefactos.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'commit (SHA) de spiritual-practices con practicas/<id>.md'
+        required: true
+      ids:
+        description: 'ids, separados por espacio o coma'
+        required: true
+      mapas:
+        default: puente/spiritual-practices-777
+permissions: {}
+jobs:
+  lista:
+    runs-on: ubuntu-latest
+    outputs:
+      ids: ${{ steps.l.outputs.ids }}
+    steps:
+      - id: l
+        env:
+          IDS: ${{ inputs.ids }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, re
+          l = list(dict.fromkeys(x for x in re.split(r'[\s,]+', os.environ['IDS']) if x))
+          assert 0 < len(l) <= 64 and all(re.fullmatch(r'[A-Za-z0-9_-]+', x) for x in l), 'ids inválidos'
+          print('ids=' + json.dumps(l))
+          PY
+  img:
+    needs: lista
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        id: ${{ fromJSON(needs.lista.outputs.ids) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ID: ${{ matrix.id }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          sparse-checkout: |
+            practicas
+            videos/hf
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: ${{ inputs.mapas }}
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          path: mapas
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            practicas/voces.json
+            practicas/imagenes.json
+      - uses: actions/checkout@v4
+        with:
+          path: motor
+          sparse-checkout: |
+            img
+            hf
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: voz guardada
+        id: v
+        run: |
+          cp mapas/practicas/voces.json mapas/practicas/imagenes.json practicas/
+          test -f "practicas/$ID.md" || { echo "falta el guion"; exit 1; }
+          FID=$(python -c "import json,os;print(json.load(open('practicas/voces.json')).get(os.environ['ID'],{}).get('file_id',''))")
+          echo "fid=$FID" >> "$GITHUB_OUTPUT"; echo "voz ${FID:+guardada}${FID:-nueva}"
+      - uses: actions/cache@v4
+        if: steps.v.outputs.fid == ''
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/huggingface
+            ~/.cache/torch
+          key: motor-v1
+      - name: herramientas
+        env:
+          FID: ${{ steps.v.outputs.fid }}
+        run: |
+          if [ -z "$FID" ]; then pip install -q modal && pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu && pip install -q chatterbox-tts; fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+      - name: imágenes
+        run: |
+          F=$(python -c "import json,os;print(json.load(open('practicas/imagenes.json')).get(os.environ['ID'],{}).get('file_id',''))")
+          [ -n "$F" ] || { echo "faltan las imágenes de $ID (img/lanzar.sh)"; exit 1; }
+          mkdir -p imgs && python practicas/telegram.py bajar "$F" imgs.tgz && tar xzf imgs.tgz -C imgs && ls imgs
+      - name: voz
+        env:
+          REF_ID: ${{ secrets.REF_ID }}
+          FID: ${{ steps.v.outputs.fid }}
+        run: |
+          D=videos/out/voz/reel-$ID; mkdir -p "$D"
+          if [ -n "$FID" ]; then
+            python practicas/telegram.py bajar "$FID" voz.tgz && tar xzf voz.tgz -C "$D"
+            if [ -f "$D/voz.flac" ]; then ffmpeg -v error -y -i "$D/voz.flac" "$D/voz.wav"; fi
+            echo '{}' > voz.json
+          else
+            python practicas/telegram.py bajar "$REF_ID" ref.wav
+            python videos/gh_practica.py voz "$ID" ref.wav
+            ffmpeg -v error -y -i "$D/voz.wav" -c:a flac -sample_fmt s16 "$D/voz.flac"
+            tar czf voz.tgz -C "$D" voz.flac timeline.json
+            python practicas/telegram.py subir-voz voz.tgz "$ID" > /dev/null
+            python -c "import json,os;i=os.environ['ID'];m=json.load(open('practicas/voces.json'));json.dump({i:m[i]},open('voz.json','w'))"
+          fi
+          cp "$D/voz.wav" "$D/timeline.json" .
+      - name: video
+        run: |
+          python motor/img/armar.py "practicas/$ID.md" timeline.json voz.wav imgs out.mp4
+          mkdir -p salida fotos; DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
+          for k in $(seq 1 16); do ffmpeg -v error -y -ss "$(python -c "print($DUR*($k-0.5)/16)")" -i out.mp4 -frames:v 1 -vf scale=270:480 "fotos/$(printf %02d $k).png"; done
+          ffmpeg -v error -y -framerate 1 -i fotos/%02d.png -vf "tile=8x2:padding=4:color=white" -frames:v 1 "salida/$ID-hoja.jpg"
+          echo "dur $DUR s, $(du -h out.mp4 | cut -f1)" | tee salida/info.txt
+          python -c "import json,os;json.dump({'id':os.environ['ID'],'modo':'img','voz':json.load(open('voz.json')),'info':open('salida/info.txt').read().strip()},open('res.json','w'))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: img-${{ matrix.id }}
+          path: |
+            res.json
+            salida/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mp4-${{ matrix.id }}
+          path: out.mp4
+          compression-level: 0
+          retention-days: 14
