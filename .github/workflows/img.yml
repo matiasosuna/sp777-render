@@ -13,6 +13,7 @@ on:
         description: 'ids, separados por espacio o coma'
         required: true
       mapas:
+        description: 'rama de spiritual-practices con voces/imagenes.json, o «estado» (rama estado de este repo, noche.yml)'
         default: puente/spiritual-practices-777
 permissions: {}
 jobs:
@@ -55,10 +56,21 @@ jobs:
             practicas
             videos/hf
       - uses: actions/checkout@v4
+        if: inputs.mapas != 'estado'
         with:
           repository: matiasosuna/spiritual-practices
           ref: ${{ inputs.mapas }}
           ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          path: mapas
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            practicas/voces.json
+            practicas/imagenes.json
+      - uses: actions/checkout@v4
+        if: inputs.mapas == 'estado'
+        with:
+          ref: estado
           persist-credentials: false
           path: mapas
           sparse-checkout-cone-mode: false

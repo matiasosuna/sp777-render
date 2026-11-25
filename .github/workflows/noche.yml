@@ -1,0 +1,66 @@
+name: noche
+run-name: noche ${{ github.event_name }}
+# Ciclo del repertorio sin la Mac (25/11/2026): imágenes FLUX en Modal → img.yml → hojas para revisar → subir.yml → Telegram.
+# Lee guiones y prompts de spiritual-practices (solo lectura) y escribe todo en la rama `estado` de este repo. Ver img/noche.py.
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_img:
+        description: 'máximo de videos a los que hacer imágenes en esta vuelta'
+        default: '30'
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: noche
+  cancel-in-progress: false
+jobs:
+  vuelta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      RAMA_SP: puente/spiritual-practices-777
+      MAX_IMG: ${{ inputs.max_img || '30' }}
+      GH_TOKEN: ${{ github.token }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
+      MODAL_HERMESTAROT444_ID: ${{ secrets.MODAL_HERMESTAROT444_ID }}
+      MODAL_HERMESTAROT444_SECRET: ${{ secrets.MODAL_HERMESTAROT444_SECRET }}
+      MODAL_FAMILIA_ID: ${{ secrets.MODAL_FAMILIA_ID }}
+      MODAL_FAMILIA_SECRET: ${{ secrets.MODAL_FAMILIA_SECRET }}
+      MODAL_OSUNA_DEVS_ID: ${{ secrets.MODAL_OSUNA_DEVS_ID }}
+      MODAL_OSUNA_DEVS_SECRET: ${{ secrets.MODAL_OSUNA_DEVS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: motor
+          persist-credentials: false
+          sparse-checkout: img
+      - uses: actions/checkout@v4
+        with:
+          repository: matiasosuna/spiritual-practices
+          ref: puente/spiritual-practices-777
+          ssh-key: ${{ secrets.MOTOR_KEY }}
+          persist-credentials: false
+          path: sp
+          sparse-checkout: practicas
+      - uses: actions/checkout@v4
+        with:
+          ref: estado
+          path: est
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -q modal pillow
+      - name: vuelta
+        run: python motor/img/noche.py
+      - name: guardar estado
+        if: always()
+        working-directory: est
+        run: |
+          git config user.name "sp777 noche"; git config user.email "noche@users.noreply.github.com"
+          git add -A; git diff --cached --quiet && exit 0
+          git commit -q -m "estado: vuelta ${{ github.run_id }}"
+          for k in 1 2 3 4 5; do git push -q origin HEAD:estado && exit 0; git pull -q --rebase origin estado; done; exit 1
