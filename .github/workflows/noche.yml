@@ -9,7 +9,7 @@ on:
     inputs:
       max_img:
         description: 'máximo de videos a los que hacer imágenes en esta vuelta'
-        default: '30'
+        default: '15'
 permissions:
   contents: write
   actions: write
@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 300
     env:
       RAMA_SP: puente/spiritual-practices-777
-      MAX_IMG: ${{ inputs.max_img || '30' }}
+      MAX_IMG: ${{ inputs.max_img || '15' }}
       GH_TOKEN: ${{ github.token }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       TELEGRAM_CANAL_REPERTORIO: ${{ secrets.TELEGRAM_CANAL }}
@@ -64,3 +64,8 @@ jobs:
           git add -A; git diff --cached --quiet && exit 0
           git commit -q -m "estado: vuelta ${{ github.run_id }}"
           for k in 1 2 3 4 5; do git push -q origin HEAD:estado && exit 0; git pull -q --rebase origin estado; done; exit 1
+      # El cron de GitHub no arranca este workflow (25/11): cada vuelta lanza la siguiente 15 min después de terminar.
+      # (workflow_dispatch con GITHUB_TOKEN sí crea runs; el grupo de concurrencia deja una sola pendiente.)
+      - name: siguiente vuelta
+        if: always()
+        run: sleep 900; gh workflow run noche.yml -R "$GITHUB_REPOSITORY" -f max_img="$MAX_IMG"
